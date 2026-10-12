@@ -1,0 +1,23 @@
+# build output (GitHub Pages is built by the workflow in .github/workflows/pages.yml)
+dist/
+node_modules/
+
+# Python (and the optional PyInstaller app build in the README)
+app-dist/
+app-build/
+*.spec
+__pycache__/
+*.pyc
+
+# files the live demo and local runs write
+live.json
+.optic-*.json
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# not part of the project
+Claude outputs/

@@ -1,0 +1,55 @@
+# Test on every push and pull request; on main (or by hand), build the single-file site and publish it to GitHub Pages.
+# One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
+name: Test and publish
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v6          # for the extension test and the cross-checks
+        with:
+          python-version: '3.12'
+      - run: pip install batoid optiland       # optional: the cross-check suite is skipped without them
+        continue-on-error: true
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

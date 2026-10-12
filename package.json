@@ -1,0 +1,15 @@
+{
+  "name": "optic-sketch",
+  "private": true,
+  "description": "Browser sketchpad for optical layouts: an exact 3D conic ray tracer with a Canvas 2D interface",
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.js",
+    "serve": "python3 -m http.server 8000",
+    "app": "python3 optic_app.py",
+    "format": "npx prettier@3 --write src tests build.js index.html"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
