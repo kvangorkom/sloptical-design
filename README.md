@@ -6,7 +6,7 @@ figure.
 
 It is a sketchpad, not a design code: sketch here, then check the design properly in another tool. Bugs may abound!
 
-**Try it:** https://kvangorkom.github.io/optic_sketch/
+**Try it:** https://kvangorkom.github.io/sloptical-design/
 
 Press **H** in the app for the keys and a short guide to every feature.
 

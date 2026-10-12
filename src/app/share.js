@@ -1,7 +1,7 @@
 // share.js — designs in links: the design (its JSON, deflated, base64url) in the page address after "#d=". Opening such a
 // link opens the design in a new tab. Links point at the hosted page (GitHub Pages) unless this page is itself on the web.
 
-const SHARE_BASE = 'https://kvangorkom.github.io/optic_sketch/';
+const SHARE_BASE = 'https://kvangorkom.github.io/sloptical-design/';
 
 const b64url = bytes => {
   let s = '';
