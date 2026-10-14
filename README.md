@@ -1,10 +1,6 @@
-# Optic Sketch
+# Sloptical Design
 
-A browser sketchpad for quickly laying out optical systems: mirrors, lenses and off-axis conics, traced exactly in 3D,
-with spots, footprints and wavefronts at any plane. Designs export to Zemax, batoid and optiland, and to a vector PDF
-figure.
-
-It is a sketchpad, not a design code: sketch here, then check the design properly in another tool. Bugs may abound!
+A vibe-coded (Claude Opus 5.5), in-browser sketchpad for quickly laying out simple optical systems with a somewhat intuitive interface. Assume the results are wrong until you've exported them to some other, human-coded raytrace tool!
 
 **Try it:** https://kvangorkom.github.io/sloptical-design/
 
@@ -23,21 +19,6 @@ Press **H** in the app for the keys and a short guide to every feature.
   ```
 - **Driven from Python:** `python3 optic_live.py serve design.json` opens the page watching the file, so any script
   that rewrites the file updates the view. `optic_live.py` explains more.
-
-Lengths are in mm, angles in degrees and wavelengths in µm.
-
-## Layout
-
-```
-index.html          the page
-src/engine/         the ray tracer and its analysis (no DOM; runs in Node too)
-src/app/            the user interface: drawing, editing, popups, files, PDF export
-extensions/         example Python extensions (see extensions/README.md)
-optic_app.py        desktop app
-optic_live.py       live view driven from a script
-build.js            single-file build for GitHub Pages (dist/index.html)
-tests/              node --test
-```
 
 ## GitHub Pages
 
