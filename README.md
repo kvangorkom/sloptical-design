@@ -1,6 +1,8 @@
 # Sloptical Design
 
-A vibe-coded (Claude Opus 5.5), in-browser sketchpad for quickly laying out simple optical systems with a somewhat intuitive interface. Assume the results are wrong until you've exported them to some other, human-coded raytrace tool!
+A vibe-coded (Claude Opus 5.5), in-browser tool for sketching out simple optical systems with a sorta intuitive interface. Assume the results are wrong until you've exported them to some other, human-coded raytrace tool!
+
+There are many bugs—use with caution.
 
 **Try it:** https://kvangorkom.github.io/sloptical-design/
 
