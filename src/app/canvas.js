@@ -531,10 +531,12 @@ function settleRide(ri) {
     }
   if (n) update();
 }
-/** Stigmatic's mode changed: its locks are made again in the new mode, each mirror keeping the image it has now. */
+/** Stigmatic's mode changed: its locks are made again in the new mode, each mirror keeping the image it has now. Mirrors
+ *  it hadn't locked (the TMA's, say, whose aberrations cancel between them rather than each imaging perfectly) are left be. */
 function restigmatize() {
-  sys.rows.forEach((r, ri) => ri && stigLocked(ri) && delete r.lock);
-  return stigmatize();
+  const own = sys.rows.flatMap((r, ri) => (ri && stigLocked(ri) ? [ri] : []));
+  own.forEach(ri => delete sys.rows[ri].lock);
+  return own.filter(ri => stigLock(ri, S)).length;
 }
 function insertAt(mx, my, kind) {
   const hit = axisAt(mx, my);

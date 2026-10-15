@@ -69,7 +69,7 @@ function fresh() {
     return doc;
   const d = {
     id: newId(),
-    sys: JSON.parse(JSON.stringify(sys ?? PRESETS['Cassegrain f/20'])),
+    sys: JSON.parse(JSON.stringify(sys ?? NEW_DESIGN)),
     file: { name: freeName(), handle: null, saved: null, path: null },
     view: null,
     hist: null,
@@ -84,11 +84,11 @@ function resetHist() {
   Object.assign(hist, { undo: [], redo: [], cur: JSON.stringify(sys) });
   commit();
 }
-/** File ▸ New design: a new tab with the default preset. */
+/** File ▸ New design: a new tab with the simple starting design (a single mirror). */
 function newDesign() {
   const d = {
     id: newId(),
-    sys: structuredClone(PRESETS['Cassegrain f/20']),
+    sys: structuredClone(NEW_DESIGN),
     file: { name: freeName(), handle: null, saved: null },
     view: null,
     hist: null,
@@ -187,7 +187,7 @@ function restoreDocs() {
           id: newId(),
           name: f.name ?? 'untitled.json',
           saved: f.saved ?? null,
-          sys: o?.rows ? o : PRESETS['Cassegrain f/20'],
+          sys: o?.rows ? o : PRESETS[DEFAULT_DESIGN],
         },
       ],
     };
@@ -218,7 +218,7 @@ function restoreDocs() {
   if (blank)
     docs.push({
       id: newId(),
-      sys: PRESETS['Cassegrain f/20'],
+      sys: PRESETS[DEFAULT_DESIGN],
       file: { name: 'untitled.json', handle: null, saved: null },
       view: null,
       hist: null,

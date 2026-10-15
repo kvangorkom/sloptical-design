@@ -165,7 +165,7 @@ function load(o, keepView) {
     fields: [0],
     rays: 9,
     grid: 21,
-    view: sys?.view ?? 'rays',
+    view: sys?.view ?? 'cones', // (beams as cones unless the design says rays)
     full: sys?.full ?? true,
     aoi: sys?.aoi ?? false,
     shapes: [],

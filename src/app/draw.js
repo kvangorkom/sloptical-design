@@ -501,6 +501,24 @@ function solids3(g, M, o, D) {
         { polys, paint },
       ]);
     }
+    // the incoming beam's flat face where it starts (the pupil): outlined, so it reads apart from the bundle's sides
+    fw.forEach((j, q) => {
+      const E = Rs[q].filter(Boolean).map(r => r[0]);
+      if (E.length < 3) return;
+      const c = [0, 1, 2].map(k => E.reduce((t, p) => t + p[k], 0) / E.length);
+      if (
+        Math.max(...E.map(p => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]))) <
+        1e-6 * (1 + sys.rows[0].ap)
+      )
+        return; // (a point source: no face)
+      items.push([
+        mean(E),
+        () => {
+          const h = View3D.hull(E.map(M)); // (its rim: the face is flat, so its outline on screen is the hull of its points)
+          g.line([...h, h[0]], { color: o.fc(j), width: 1, alpha: 0.9 });
+        },
+      ]);
+    });
   }
   if (o.beam !== 'cones')
     fw.forEach(j =>
@@ -1220,9 +1238,16 @@ function draw() {
     const Q = at(t.j, t.s);
     const e = across(u);
     const hw = probeHW(t.j, t.s);
-    g.line([-1, 1].map(k => Q.map((v, m) => v + k * (hw + 4 / view.s) * e[m])).map(X), {
-      color: p.docked ? mute : acc,
-      width: 2,
-    });
+    const r = hw + 4 / view.s;
+    const e2 = Optics.cross(u, e); // 3D views: the plane across the beam, seen as a ring (a line from the side)
+    g.line(
+      side
+        ? [-1, 1].map(k => Q.map((v, m) => v + k * r * e[m])).map(X)
+        : Array.from({ length: 49 }, (_, n) => {
+            const a = (2 * Math.PI * n) / 48;
+            return X(Q.map((v, m) => v + r * (Math.cos(a) * e[m] + Math.sin(a) * e2[m])));
+          }),
+      { color: p.docked ? mute : acc, width: 2 },
+    );
   });
 }

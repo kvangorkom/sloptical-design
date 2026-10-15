@@ -1,6 +1,57 @@
 // presets.js — the example designs in the toolbar’s menu.
 
+/** The design a first visit opens with. */
+const DEFAULT_DESIGN = 'OAP + off-axis ellipsoid';
+/** File ▸ New design (and a new tab): a blank page, nearly — one off-axis paraboloid focusing a collimated beam. */
+const NEW_DESIGN = {
+  fields: [0, 0.5, -0.5],
+  rays: 7,
+  grid: 21,
+  rows: [
+    { t: 200, ap: 25 },
+    { name: 'Mirror', type: 'mirror', R: -400, k: -1, d: 50, t: 203.125, solve: { t: { type: 'focus' } } },
+    { name: 'Image', plot: 'spot' },
+  ],
+};
 const PRESETS = {
+  // A three-mirror anastigmat with a 6 m primary, made the classic way from three plain conics on one shared axis: the radii
+  // set the focal lengths with the Petzval sum zero (1/R1 − 1/R2 + 1/R3 = 0, a flat field), and the three conic constants
+  // then cancel spherical aberration, coma and astigmatism together (third order: an ellipsoid, a hyperboloid and an
+  // ellipsoid), polished on real rays. None images perfectly on its own; the aberrations cancel between them. It is used
+  // off-axis in both aperture and field (the beam 4.5 m off the axis, the field 0.2° off it: the primary's tilt) so that
+  // nothing blocks the light: the secondary sits clear of the incoming beam, the intermediate image falls behind the
+  // primary, and the tertiary sends the light to a fold flat at the exit pupil, which turns it out of the plane to the
+  // image (f/14, its plane tilted as an off-axis field's is). The fields shown span ±0.05° (±3′); try the 3D view (4).
+  TMA: {
+    fields: [0, 0.05, -0.05, [0.05, 0]],
+    rays: 7,
+    grid: 21,
+    view: 'cones',
+    rows: [
+      { t: 11378.279, ap: 3000 },
+      { name: 'Primary', type: 'mirror', R: -16000, k: -0.99183431, d: 4460.2824, tilt: 0.2, t: 7434.2266 },
+      {
+        name: 'Secondary',
+        type: 'mirror',
+        R: 2485.681,
+        k: -1.5036643,
+        d: -591.08731,
+        tilt: -31.362909,
+        t: 12296.32,
+      },
+      {
+        name: 'Tertiary',
+        type: 'mirror',
+        R: -2921.0092,
+        k: -0.70114734,
+        d: -474.225,
+        tilt: 4.9701468,
+        t: 1650,
+      },
+      { name: 'Fold', type: 'mirror', tiltY: 45, t: 1660.7259, solve: { t: { type: 'focus' } } },
+      { name: 'Image', tilt: 13.51, plot: 'spot' },
+    ],
+  },
   'Cassegrain f/20': {
     fields: [0, 0.1, -0.1],
     rays: 9,
@@ -139,46 +190,5 @@ const PRESETS = {
         { name: 'Focus', plot: 'spot', id: 'r2' },
       ],
     },
-  },
-  // An off-axis three-mirror anastigmat: a paraboloid primary, a convex hyperboloid secondary and a concave ellipsoid
-  // tertiary, each locked to image perfectly (Stigmatic). The tertiary sends the image out of the plane (x = −300), so the
-  // design is 3D: try the 3D view (4) and orbit.
-  'Off-axis TMA (3D)': {
-    fields: [0, 0.2, [0.2, 0]],
-    rays: 7,
-    grid: 21,
-    rows: [
-      { t: 400, ap: 30 },
-      { name: 'Primary', type: 'mirror', R: -1600, k: -1, d: 200, t: 600 },
-      {
-        name: 'Secondary',
-        type: 'mirror',
-        R: 561.239664,
-        k: -2.94974287,
-        d: -62.6558609,
-        tilt: -17.1486095,
-        t: 1000,
-        lock: { f1: { at: 'in' }, f2: { at: 'pt', p: [0, -250, 600] }, vary: ['R', 'k', 'd', 'tilt'] },
-      },
-      {
-        name: 'Tertiary',
-        type: 'mirror',
-        R: -268.99507,
-        k: -0.252622161,
-        oa: 'angle',
-        d: -39.0402597,
-        tilt: 15.9886916,
-        tiltY: 56.0151075,
-        clock: -70.936982,
-        t: 508.043228,
-        solve: { t: { type: 'focus' } },
-        lock: {
-          f1: { at: 'in' },
-          f2: { at: 'pt', p: [-300, -280, 400] },
-          vary: ['R', 'k', 'd', 'tilt', 'tiltY', 'clock'],
-        },
-      },
-      { name: 'Image', plot: 'spot' },
-    ],
   },
 };

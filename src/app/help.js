@@ -20,7 +20,7 @@ function helpDialog(view = 'keys') {
     ['D', 'measure: drag between two points (they snap to optics and foci)'],
     [`${K},`, 'options'],
     ['drag a square', 'move a mirror’s image (Stigmatic)'],
-    ['S', 'Stigmatic: hold foci, or foci follow their mirrors'],
+    ['S', 'Stigmatic: foci follow their mirrors, or hold foci'],
     ['drag empty space', 'pan'],
     ['wheel', 'zoom'],
     ['double-click', 'fit the view'],
@@ -59,7 +59,7 @@ function helpDialog(view = 'keys') {
     ],
     [
       'Stigmatic',
-      'curved mirrors image perfectly: each keeps a focus on the beam coming in, and its image is where its other focus is. Beside it, choose what moving an optic does. Holds foci: images stay where they are in the room and mirrors reshape (R, k, off-axis, tilt) to keep them; flats between a mirror and its image stay put too, the beam sliding across them. Foci follow: each image moves with its mirror (it keeps its place relative to where the beam hits it), so moving or tilting a mirror carries its image and focal plane along, and a paraboloid in a collimated beam can slide across it; the shape adjusts as needed. Drag a square to move an image. An edit that would spoil perfect imaging is refused.',
+      'curved mirrors image perfectly: each keeps a focus on the beam coming in, and its image is where its other focus is. Beside it, choose what moving an optic does. Foci follow (the default): each image moves with its mirror (it keeps its place relative to where the beam hits it), so moving or tilting a mirror carries its image and focal plane along, and a paraboloid in a collimated beam can slide across it; the shape adjusts as needed. Holds foci: images stay where they are in the room and mirrors reshape (R, k, off-axis, tilt) to keep them; flats between a mirror and its image stay put too, the beam sliding across them. Drag a square to move an image. An edit that would spoil perfect imaging is refused.',
     ],
     [
       '3D',
