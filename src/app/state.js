@@ -114,6 +114,8 @@ const parse = (k, s) => (
 );
 const tok = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const label = i => sys.rows[i + 1]?.name || 'S' + (i + 1);
+/** Text made safe to put in HTML (names come from design files and links, which anyone can write). */
+const escHTML = t => String(t).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const fl = f => (sys.rows[0].R ? `${fstr(f)} mm` : `${fstr(f)}°`); // a field value with its unit
 const fstr = Optics.fieldText;
 /** Set the incoming beam's ROC at the pupil (0 = collimated). Switching between collimated and a focus converts the fields

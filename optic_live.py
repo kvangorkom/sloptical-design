@@ -9,8 +9,8 @@ viewer on every change, so a script only sets the values it cares about. In a de
 the active one (src/engine/configs.js describes the rest of the format).
 
 The viewer polls the file over http, the same way in every browser (Firefox, Safari, Chrome, Edge):
-  • serve() (or `python3 optic_live.py serve file.json`) serves this folder and the file, with CORS, and opens
-    index.html?watch=… on it.
+  • serve() (or `python3 optic_live.py serve file.json`) serves this folder and the file on localhost, and opens
+    index.html?watch=… on it. Pages from other sites may read the watched file only (CORS), not the rest of the folder.
   • A viewer opened any other way (from disk, another server) can watch the URL serve() prints: File ▸ Watch file for changes.
 
     import optic_live as ol
@@ -46,19 +46,37 @@ def write(system, path):
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
-    """Serves this folder, plus the watched file at /live/<name> wherever it lives; nothing is cached, and any page may read it
-    (CORS), so a viewer opened from disk or hosted elsewhere can watch too."""
+    """Serves this folder, plus the watched file at /live/<name> wherever it lives; nothing is cached. Only the watched
+    file may be read by other sites' pages (CORS), so a viewer opened from disk or hosted elsewhere can watch it; the
+    rest of the folder isn't theirs to read. Requests must be addressed to this computer (localhost), which keeps a
+    site that points its own name at 127.0.0.1 ("DNS rebinding") out too."""
     watched = None
 
+    def _is_live(self, path):
+        return bool(self.watched) and path.split('?')[0] == '/live/' + os.path.basename(self.watched)
+
     def translate_path(self, path):
-        name = os.path.basename(self.watched or '')
-        if self.watched and path.split('?')[0] == '/live/' + name:
-            return self.watched
-        return super().translate_path(path)
+        return self.watched if self._is_live(path) else super().translate_path(path)
+
+    def _local(self):
+        host = (self.headers.get('Host') or '').strip().lower()
+        host = host[1:host.index(']')] if host.startswith('[') and ']' in host else host.rsplit(':', 1)[0]
+        return host in ('localhost', '127.0.0.1', '::1')
+
+    def do_GET(self):
+        if not self._local():
+            return self.send_error(403, 'Optic Sketch serves only this computer (http://localhost)')
+        super().do_GET()
+
+    def do_HEAD(self):
+        if not self._local():
+            return self.send_error(403)
+        super().do_HEAD()
 
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
-        self.send_header('Access-Control-Allow-Origin', '*')
+        if self._is_live(self.path):
+            self.send_header('Access-Control-Allow-Origin', '*')
         super().end_headers()
 
     def log_message(self, *args):
@@ -79,8 +97,8 @@ def serve(path, port=8000, browser=True):
         raise OSError(f'no free port in {port}–{port + 19}')
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f'http://localhost:{p}/index.html?watch=/live/{os.path.basename(path)}'
-    print('Optic Sketch:', url)
-    print('Watched file:', f'http://localhost:{p}/live/{os.path.basename(path)}')
+    print('Optic Sketch:', url, flush=True)
+    print('Watched file:', f'http://localhost:{p}/live/{os.path.basename(path)}', flush=True)
     if browser:
         webbrowser.open(url)
     return url

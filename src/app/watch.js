@@ -313,8 +313,10 @@ const wFocus = (w, n) => {
   const f = s.c ? Optics.foci(s)[n] : null;
   return f ? wmm((f[1] - s.V[1]) * s.ez[1] + (f[2] - s.V[2]) * s.ez[2]) : '∞ / none';
 };
-/** An extension's value for row ri: run it there as its surface popup would. undefined while Python loads. */
-function wExt(w) {
+/** An extension's value for row ri: run there as its surface popup would (in the worker). Returns the latest result,
+ *  { out, v }, and redraws the watch window when a newer one arrives (or calls `then`, if given). */
+const extWatch = {}; // the owners of the watch window's runs, one per optic (each keeps its own latest)
+function wExt(w, then = renderWatch) {
   const e = exts.find(x => x.id === w.ext);
   if (!e) return { v: 'extension removed' };
   if (!e.run) {
@@ -325,20 +327,12 @@ function wExt(w) {
       );
     return { v: e.err ? 'error' : '…' };
   }
-  try {
-    const i = w.ri - 1;
-    const out =
-      JSON.parse(
-        pyRT.globals.get('_call')(
-          e.run,
-          JSON.stringify(extCtx(e, { surf: true, i, j: i, s: seg(i) })),
-          extJS,
-        ),
-      ) ?? {};
-    return { out, v: out.values?.[w.key] };
-  } catch {
-    return { v: 'error' };
-  }
+  const i = w.ri - 1;
+  const r = extRun((extWatch[w.ri] ??= {}), e, { surf: true, i, j: i, s: seg(i) }, () => then());
+  if (!r) return { v: '…' };
+  if (r.err) return { v: 'error' };
+  const v = r.out.values?.[w.key];
+  return { out: r.out, v: typeof v === 'number' || typeof v === 'string' ? v : undefined };
 }
 const wLabel = w => {
   const q = WQ[w.q];
@@ -432,7 +426,7 @@ $('wList').onclick = e => {
 };
 /** The add form: the quantity (grouped), then the optic and field it needs; an extension's values are listed after a run there. */
 function renderPick() {
-  const optics = S.map((_, i) => `<option value="${i + 1}">${label(i)}</option>`).join('');
+  const optics = S.map((_, i) => `<option value="${i + 1}">${escHTML(label(i))}</option>`).join('');
   const fields = sys.fields.map((f, j) => `<option value="${j}">field ${fl(f)}</option>`).join('');
   const xs = exts.filter(e => e.targets?.some(t => t === 'surface' || t === 'beam'));
   $('wQ').innerHTML =
@@ -446,7 +440,7 @@ function renderPick() {
       )
       .join('') +
     (xs.length
-      ? `<optgroup label="Extensions">${xs.map(e => `<option value="ext:${e.id}">${e.name}</option>`).join('')}</optgroup>`
+      ? `<optgroup label="Extensions">${xs.map(e => `<option value="ext:${e.id}">${escHTML(e.name)}</option>`).join('')}</optgroup>`
       : '');
   $('wS').innerHTML = optics;
   $('wF').innerHTML = fields;
@@ -461,12 +455,12 @@ function pickShow() {
   $('wK').hidden = !ext;
   $('wPick').querySelector('[type=submit]').disabled = false;
   if (ext) {
-    const r = wExt({ ext: v.slice(4), ri: +$('wS').value });
+    const r = wExt({ ext: v.slice(4), ri: +$('wS').value }, () => $('wQ').value === v && pickShow());
     const out = r.out;
     const keys = Object.keys(out?.values ?? {});
     $('wK').innerHTML = keys.length
-      ? keys.map(k => `<option>${k}</option>`).join('')
-      : `<option value="">${out ? 'no values to watch here' : r.v === 'error' ? 'it couldn’t run (see Extensions)' : 'loading Python…'}</option>`;
+      ? keys.map(k => `<option>${escHTML(k)}</option>`).join('')
+      : `<option value="">${out ? 'no values to watch here' : r.v === 'error' ? 'it couldn’t run (see Extensions)' : 'running…'}</option>`;
     $('wPick').querySelector('[type=submit]').disabled = !keys.length;
   }
 }

@@ -6,8 +6,10 @@ Extensions are Python scripts that add tabs to the beam and surface popups, next
   - **Opened from disk:** browsers don't let a page list a folder, so pick it once with **Load a folder…**. Its scripts are then remembered in this browser; pick it again after changing them.
   - **Elsewhere:** **Load .py…** adds single scripts from anywhere; they are remembered too.
   - Settings are kept per script.
-- **Running:** they run in the page on [Pyodide](https://pyodide.org), which is loaded from jsDelivr the first time a tab needs it (a few seconds). The standard library is always there. numpy, scipy and the other Pyodide packages are fetched automatically when a script imports them, so they need internet access.
-- **Updates:** a tab re-runs on every change while it is shown. An error shows its traceback in the tab.
+- **Running:** they run on [Pyodide](https://pyodide.org), which is loaded from jsDelivr the first time a tab needs it (a few seconds) and checked against pinned hashes. The standard library is always there. numpy, scipy and the other Pyodide packages are fetched automatically when a script imports them, so they need internet access.
+- **Sandboxed:** scripts run in a Web Worker of their own, with their own copy of the ray tracer. A script gets the `ctx` it's given and can use the internet, but it can't reach the page, what the page stores (other designs, other scripts), or the desktop app's files. `import js` there is the worker, not the page.
+- **Still code:** load only scripts you trust, as you would any script you run. A script sees the design it's given and could send it somewhere.
+- **Updates:** a tab re-runs when the design or its settings change while it is shown; the last result stays up meanwhile. An error shows its traceback in the tab.
 
 ## Writing one
 

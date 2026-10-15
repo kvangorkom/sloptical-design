@@ -110,7 +110,9 @@ function renderLock() {
       ...opts,
       ...(n === 2 ? [['inf', 'Infinity (a paraboloid: k = −1)']] : []),
     ]
-      .map(([v, t]) => `<option value="${v}"${key(L['f' + n]) === v ? ' selected' : ''}>${t}</option>`)
+      .map(
+        ([v, t]) => `<option value="${v}"${key(L['f' + n]) === v ? ' selected' : ''}>${escHTML(t)}</option>`,
+      )
       .join('')}</select></label>`;
   };
   const pinned = L.f1 || L.f2;
@@ -128,7 +130,7 @@ function renderLock() {
           ? `No exact solution varying ${vary.map(vname).join(', ')}: let another value vary.`
           : `Held by varying ${vary.map(vname).join(', ')}${spare ? ' (more than the pins need: each solve changes them as little as possible)' : ''}.`;
   el.innerHTML =
-    `<div class="lkH">Foci of ${label(ri - 1)}<small>${F.length ? `F1 ${dist(F[0])}${s.k === 0 ? ' (the centre; F1 = F2)' : ` · F2 ${dist(F[1])}`} from the vertex` : 'none'}</small></div>` +
+    `<div class="lkH">Foci of ${escHTML(label(ri - 1))}<small>${F.length ? `F1 ${dist(F[0])}${s.k === 0 ? ' (the centre; F1 = F2)' : ` · F2 ${dist(F[1])}`} from the vertex` : 'none'}</small></div>` +
     sel(1) +
     sel(2) +
     `<label>Vary <span class="seg">${Optics.VARY.map(k => `<button data-v="${k}" aria-pressed="${vary.includes(k)}" title="${VTIP[k]}">${vname(k)}</button>`).join('')}</span></label>` +

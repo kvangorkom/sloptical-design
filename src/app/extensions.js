@@ -1,10 +1,22 @@
-// extensions.js — extensions: Python scripts that add popup tabs or export formats. They run in the browser on Pyodide (loaded from
-// jsDelivr the first time one is used). A script defines NAME, run(ctx) and optionally DESCRIPTION, TARGETS ('beam',
-// 'surface', or 'export') and PARAMS (settings shown with it); run gets the context (a dict: system, surfaces, target
-// plane, the rays there per field, settings; plus ctx.trace() and ctx.plane() to trace any ray) and returns a plot (see
-// plotSpec), or for an export {filename, text, notes} (see exportDialog).
+// extensions.js — extensions: Python scripts that add popup tabs or export formats. They run on Pyodide (loaded from jsDelivr
+// the first time one is used) in a Web Worker of their own: a script sees the design it is given and can trace rays (a copy
+// of the engine runs there too), but it can't reach this page, what the page stores, or the desktop app's files. A script
+// defines NAME, run(ctx) and optionally DESCRIPTION, TARGETS ('beam', 'surface', or 'export') and PARAMS (settings shown
+// with it); run gets the context (a dict: system, surfaces, target plane, the rays there per field, settings; plus
+// ctx.trace() and ctx.plane() to trace any ray) and returns a plot (see plotSpec), or for an export {filename, text, notes}
+// (see exportDialog). Results arrive asynchronously; each place that shows one keeps its latest.
 // Scripts are kept in this browser (localStorage) with their settings; see extensions/README.md for the interface.
 const PYODIDE = 'https://cdn.jsdelivr.net/npm/pyodide@314.0.7/';
+/** Pyodide's own files and their hashes: a file that doesn't match is refused. The packages it fetches (numpy, …) are
+ *  checked against the hashes in pyodide-lock.json, so these cover everything it loads. Update them with PYODIDE (the
+ *  files are the npm package's: openssl dgst -sha384 -binary FILE | openssl base64 -A). */
+const PY_SRI = {
+  'pyodide.mjs': 'sha384-Lp79fMwxa4n2BLtugpUAoQMlbxIdg8iCUiP1r3h7nJLkQjwlXT1JzZTeHVL+f4Dg',
+  'pyodide.asm.mjs': 'sha384-/2281iaC0Iimw0B3Kagy1DBfZcJG3W4KYW+EmOqhsdY3fR9BJ88FE2Zt6y0KQKpa',
+  'pyodide.asm.wasm': 'sha384-y++qrQ72KPA1fTjLIuGMP+jppgGxjbLCgfdb0zMrnNnQVhxRUXTOTF6rTxNzllSu',
+  'python_stdlib.zip': 'sha384-xW3A5jmenkrPXbsgrIaB1FCJh9OuLT7FRMagsJMgtlhVc19k/mSy3+7nMaF/d767',
+  'pyodide-lock.json': 'sha384-o8SQQvpVlZnOl04+3dFTJipKxul9GbViVusA379wlOrfHSgxbzt0yPiqCTxOiYES',
+};
 const PYBOOT = [
   'import json, math',
   'class Ctx(dict):',
@@ -26,27 +38,198 @@ const PYBOOT = [
   '    c = Ctx(json.loads(data)); c._js = js',
   '    return json.dumps(_clean(run(c)))',
 ].join('\n');
-let pyP = null;
-let pyRT = null; // loading promise; the runtime once loaded
-/** The Python runtime, loaded once on demand. */
+/** The worker's code, run as a module of its own (it uses nothing from this page). Messages, each answered with its req:
+ *  init (the engine's sources, Pyodide's address and hashes, the bootstrap), load (a script: its interface back), run (a
+ *  script on a context and the design's rows: its result as JSON), drop (forget a script). */
+function pyWorker() {
+  let py;
+  let ready;
+  const spaces = new Map(); // script id → its namespace
+  let lay = { key: null };
+  const layout = rows => {
+    const key = JSON.stringify(rows);
+    if (lay.key !== key) {
+      const S = Optics.build(rows);
+      lay = { key, S, AX: [{ p: [0, 0, 0], u: [0, 0, 1] }, ...S.map(s => ({ p: s.P, u: s.uOut }))] };
+    }
+    return lay;
+  };
+  /** ctx.trace and ctx.plane, on the design's own surfaces (the same engine as the page's). */
+  const helpers = rows => {
+    const { S, AX } = layout(rows);
+    const ray = (f, px, py_) => [Optics.start(px, py_, f, S.beam), ...Optics.trace(S, px, py_, f)];
+    return {
+      trace: (f, px, py_) => JSON.stringify(ray(f, px, py_).map(q => ({ p: q.p, u: q.u, n: q.n, L: q.L }))),
+      plane: (j, s, f, px, py_) => {
+        const r = ray(f, px, py_);
+        if (r.length <= j) return 'null';
+        const u = AX[j].u;
+        const ey = [0, u[2], -u[1]];
+        const [q] = Optics.toPlane(
+          [r[j]],
+          AX[j].p.map((v, k) => v + s * u[k]),
+          u,
+        );
+        const d = q.u;
+        return JSON.stringify({
+          x: q.xy[0],
+          y: q.xy[1],
+          dx: d[0],
+          dy: d[1] * ey[1] + d[2] * ey[2],
+          dz: d[0] * u[0] + d[1] * u[1] + d[2] * u[2],
+          index: q.n,
+          L: q.L,
+        });
+      },
+    };
+  };
+  async function init({ engine, base, sri, boot }) {
+    self.Optics = {};
+    for (const src of engine) (0, eval)(`(${src})`)(self.Optics);
+    const get = async f => {
+      const r = await fetch(base + f, { integrity: sri[f] }).catch(() => {
+        throw Error(`couldn’t load ${f}: no connection, or the file isn’t the one expected`);
+      });
+      if (!r.ok) throw Error(`couldn’t load ${f} (HTTP ${r.status})`);
+      return r;
+    };
+    const fetch0 = self.fetch.bind(self);
+    self.fetch = (u, o) => {
+      const f = Object.keys(sri).find(k => String(u?.url ?? u) === base + k);
+      return fetch0(u, f ? { ...o, integrity: sri[f] } : o);
+    }; // Pyodide's own fetches (the wasm, the standard library, the lock file) are checked too
+    const mod = async f =>
+      import(URL.createObjectURL(new Blob([await (await get(f)).text()], { type: 'text/javascript' }))); // (checked, then run)
+    const { loadPyodide } = await mod('pyodide.mjs');
+    py = await loadPyodide({ indexURL: base, createPyodideModule: (await mod('pyodide.asm.mjs')).default });
+    // what this site keeps in the browser is out of the scripts' reach
+    for (const [o, k] of [
+      [self, 'indexedDB'],
+      [self, 'caches'],
+      [self.WorkerGlobalScope?.prototype, 'indexedDB'],
+      [self.WorkerGlobalScope?.prototype, 'caches'],
+      [self.StorageManager?.prototype, 'getDirectory'],
+    ])
+      try {
+        if (o) delete o[k];
+      } catch {}
+    py.runPython(boot);
+  }
+  self.onmessage = async ({ data: m }) => {
+    const reply = o => self.postMessage({ req: m.req, ...o });
+    try {
+      if (m.t === 'init') {
+        await (ready = init(m));
+        return reply({ ok: true });
+      }
+      await ready;
+      if (m.t === 'load') {
+        await py.loadPackagesFromImports(m.code);
+        const g = py.globals.get('dict')();
+        py.runPython(m.code, { globals: g });
+        const get = k => {
+          const v = g.get(k);
+          return v?.toJs ? v.toJs({ dict_converter: Object.fromEntries }) : v;
+        };
+        if (typeof g.get('run') !== 'function') throw Error('the script defines no run(ctx)');
+        spaces.get(m.id)?.destroy();
+        spaces.set(m.id, g);
+        return reply({
+          ok: { name: get('NAME'), desc: get('DESCRIPTION'), targets: get('TARGETS'), params: get('PARAMS') },
+        });
+      }
+      if (m.t === 'drop') {
+        spaces.get(m.id)?.destroy();
+        spaces.delete(m.id);
+        return reply({ ok: true });
+      }
+      if (m.t === 'run') {
+        const g = spaces.get(m.id);
+        if (!g) throw Error('the script isn’t loaded');
+        return reply({ ok: py.globals.get('_call')(g.get('run'), m.ctx, helpers(m.rows)) });
+      }
+    } catch (e) {
+      reply({ err: String(e?.message ?? e) });
+    }
+  };
+}
+let pyW = null; // the worker
+let pyP = null; // its start (a promise)
+let pySeq = 0;
+const pyWait = new Map(); // req → { res, rej }
+/** Ask the worker (once started): resolves with its answer, rejects with its error. */
+function pyAsk(m) {
+  return new Promise((res, rej) => {
+    if (!pyW) return rej(Error('Python isn’t running'));
+    const req = ++pySeq;
+    pyWait.set(req, { res, rej });
+    pyW.postMessage({ ...m, req });
+  });
+}
+/** Python, started once on demand: the worker, with the engine and Pyodide loaded. */
 function python() {
-  return (pyP ??= new Promise((res, rej) => {
-    if (window.loadPyodide) return res();
-    const sc = document.createElement('script');
-    sc.src = PYODIDE + 'pyodide.js';
-    sc.onload = res;
-    sc.onerror = () => rej(Error(`couldn’t load Python (Pyodide) from ${PYODIDE}`));
-    document.head.append(sc);
-  })
-    .then(() => loadPyodide({ indexURL: PYODIDE }))
-    .then(py => {
-      py.runPython(PYBOOT);
-      return (pyRT = py);
-    })
-    .catch(e => {
-      pyP = null;
-      throw e;
-    }));
+  return (pyP ??= (async () => {
+    const src = `(${pyWorker})()`;
+    pyW = new Worker(
+      location.protocol === 'file:' // (a page opened from disk can't start a module worker from a blob)
+        ? 'data:text/javascript,' + encodeURIComponent(src)
+        : URL.createObjectURL(new Blob([src], { type: 'text/javascript' })),
+      { type: 'module' }, // (Pyodide runs only in module workers)
+    );
+    pyW.onmessage = ({ data: d }) => {
+      const w = pyWait.get(d?.req);
+      if (!w) return;
+      pyWait.delete(d.req);
+      if (d.err !== undefined) w.rej(Error(String(d.err)));
+      else w.res(d.ok);
+    };
+    pyW.onerror = ev => {
+      for (const w of pyWait.values()) w.rej(Error(ev.message || 'Python stopped'));
+      pyWait.clear();
+    };
+    await pyAsk({ t: 'init', engine: Optics.SOURCES, base: PYODIDE, sri: PY_SRI, boot: PYBOOT });
+  })().catch(e => {
+    pyW?.terminate();
+    pyW = null;
+    pyP = null;
+    throw Error(`couldn’t start Python (Pyodide, from ${PYODIDE}): ${e.message ?? e}`);
+  }));
+}
+/** Run extension e on target tg (null: an export) for `owner` (a popup, the export dialog, a watched value): returns the
+ *  latest result there ({ out } or { err }; null before the first), and done(result) is called when a newer one arrives.
+ *  Only the newest request waits, and the same script on the same context isn't run again. */
+const extJobs = new WeakMap(); // owner → Map(script id → job)
+function extRun(owner, e, tg, done) {
+  if (!extJobs.has(owner)) extJobs.set(owner, new Map());
+  const jobs = extJobs.get(owner);
+  if (!jobs.has(e.id)) jobs.set(e.id, {});
+  const j = jobs.get(e.id);
+  j.done = done;
+  const ctx = JSON.stringify(extCtx(e, tg));
+  const sig = `${e.gen}\n${ctx}`;
+  if (sig !== j.want) {
+    j.want = sig;
+    j.next = { t: 'run', id: e.id, ctx, rows: JSON.parse(JSON.stringify(sys.rows)) };
+    if (!j.busy) extPump(j);
+  }
+  return j.res ?? null;
+}
+async function extPump(j) {
+  j.busy = true;
+  while (j.next) {
+    const m = j.next;
+    j.next = null;
+    let r;
+    try {
+      const out = JSON.parse(await pyAsk(m));
+      r = { out: out && typeof out === 'object' && !Array.isArray(out) ? out : {} };
+    } catch (err) {
+      r = { err };
+    }
+    j.res = r;
+    if (!j.next) j.done?.(r);
+  }
+  j.busy = false;
 }
 // Two kinds: the extensions folder's scripts (source 'dir': read from extensions/ next to the page when it is served, or
 // from a folder picked in the dialog, and kept in step with it) and scripts loaded one by one from anywhere ('file').
@@ -91,25 +274,24 @@ const saveExts = () => {
 };
 const extFor = surf =>
   exts.filter(e => (e.targets ?? ['beam', 'surface']).includes(surf ? 'surface' : 'beam'));
-/** Run a script's top level in its own namespace and read its interface (loads any packages it imports first). */
+/** Run a script's top level (in the worker, its own namespace) and read its interface; packages it imports load first. */
 function loadExt(e) {
   return (e.ready ??= python()
-    .then(async py => {
-      await py.loadPackagesFromImports(e.code);
-      const ns = py.globals.get('dict')();
-      py.runPython(e.code, { globals: ns });
-      const get = k => {
-        const v = ns.get(k);
-        return v?.toJs ? v.toJs({ dict_converter: Object.fromEntries }) : v;
-      };
-      const run = ns.get('run');
-      if (typeof run !== 'function') throw Error('the script defines no run(ctx)');
+    .then(() => pyAsk({ t: 'load', id: e.id, code: e.code }))
+    .then(i => {
+      // (what comes back is the script's to say: kept to plain data of the expected kinds)
+      const P = i.params && typeof i.params === 'object' && !Array.isArray(i.params) ? i.params : {};
       Object.assign(e, {
-        name: String(get('NAME') ?? e.file),
-        desc: String(get('DESCRIPTION') ?? ''),
-        targets: get('TARGETS') ?? ['beam', 'surface'],
-        params: get('PARAMS') ?? {},
-        run,
+        name: String(i.name ?? e.file),
+        desc: String(i.desc ?? ''),
+        targets: Array.isArray(i.targets) ? i.targets.map(String) : ['beam', 'surface'],
+        params: Object.fromEntries(
+          Object.entries(P).filter(
+            ([k, d]) => d && typeof d === 'object' && !/^(__proto__|constructor|prototype)$/.test(k),
+          ),
+        ),
+        run: true, // (loaded: it runs in the worker)
+        gen: (e.gen ?? 0) + 1, // results from before a reload don't count
         err: null,
       });
       for (const [k, v] of Object.entries(e.params)) if (!(k in (e.values ??= {}))) e.values[k] = v.default;
@@ -128,6 +310,8 @@ function loadExt(e) {
       throw err;
     }));
 }
+/** Forget a script in the worker (removed, or about to load again). */
+const dropExt = e => pyW && pyAsk({ t: 'drop', id: e.id }).catch(() => {});
 async function addExt(file, code) {
   const e = peek({
     id: Math.random().toString(36).slice(2, 9),
@@ -155,7 +339,7 @@ function renderExtList() {
     .filter(e => e.targets?.includes('export'))
     .map(
       e =>
-        `<button role="menuitem" data-f="x:${e.id}" title="${esc(e.desc || e.name)}">Export ${esc(e.name)}…</button>`,
+        `<button role="menuitem" data-f="x:${e.id}" title="${esc(e.desc) || esc(e.name)}">Export ${esc(e.name)}…</button>`,
     )
     .join('');
   $('extList').innerHTML = exts.length
@@ -171,6 +355,7 @@ function renderExtList() {
 $('extList').onclick = e => {
   const d = e.target.dataset;
   if (d.del !== undefined) {
+    dropExt(exts[+d.del]);
     exts.splice(+d.del, 1);
     saveExts();
     renderExtList();
@@ -179,6 +364,7 @@ $('extList').onclick = e => {
   if (d.rel !== undefined) {
     const x = exts[+d.rel];
     Object.assign(x, { ready: null, run: null, err: null });
+    dropExt(x);
     loadExt(x).catch(() => {});
   }
 };
@@ -203,10 +389,13 @@ function syncFolder(files, source = 'dir') {
           values: {},
         }),
       );
-    else if (e.code !== code) peek(Object.assign(e, { code, run: null, ready: null, err: null }));
+    else if (e.code !== code) {
+      dropExt(e);
+      peek(Object.assign(e, { code, run: null, ready: null, err: null }));
+    }
   }
   for (let k = exts.length - 1; k >= 0; k--)
-    if (exts[k].source === source && !(exts[k].file in files)) exts.splice(k, 1);
+    if (exts[k].source === source && !(exts[k].file in files)) dropExt(exts.splice(k, 1)[0]);
   saveExts();
   renderExtList();
   update();
@@ -286,36 +475,6 @@ function syncExtTabs(p, surf) {
     m.append(b);
   });
 }
-/** A ray on the plane s along axis segment j, in that plane's frame: position from the axis point and direction cosines. */
-function planeRay(j, s, f, px, py) {
-  const r = [Optics.start(px, py, f, S.beam), ...Optics.trace(S, px, py, f)];
-  if (r.length <= j) return null;
-  const u = AX[j].u;
-  const ey = [0, u[2], -u[1]];
-  const [q] = Optics.toPlane([r[j]], at(j, s), u);
-  const d = q.u;
-  return {
-    x: q.xy[0],
-    y: q.xy[1],
-    dx: d[0],
-    dy: d[1] * ey[1] + d[2] * ey[2],
-    dz: d[0] * u[0] + d[1] * u[1] + d[2] * u[2],
-    index: q.n,
-    L: q.L,
-  };
-}
-const extJS = {
-  trace: (f, px, py) =>
-    JSON.stringify(
-      [Optics.start(px, py, f, S.beam), ...Optics.trace(S, px, py, f)].map(q => ({
-        p: q.p,
-        u: q.u,
-        n: q.n,
-        L: q.L,
-      })),
-    ),
-  plane: (j, s, f, px, py) => JSON.stringify(planeRay(j, s, f, px, py)),
-};
 /** The context a script's run(ctx) receives (JSON; lengths in mm, angles in degrees, positions [y, z] in the layout's frame). */
 function extCtx(e, tg) {
   const a = sys.rows[0].ap;
@@ -401,19 +560,40 @@ function extCtx(e, tg) {
     }),
   };
 }
-/** An extension's tab: its settings above, its plot below; it runs again on every update while shown. */
+/** An extension's tab: its settings above, its plot below. It runs again (in the worker) when what it is given changes;
+ *  the latest plot stays up meanwhile. */
 function renderExt(p, id, tg) {
   const e = exts.find(x => x.id === id);
+  extControls(p, e);
+  if (!e.run) {
+    extDraw(p, e, null);
+    if (!e.err)
+      loadExt(e).then(
+        () => p.tgt && renderPop(p),
+        () => p.tgt && renderPop(p),
+      );
+    return;
+  }
+  const shown = () =>
+    !p.el.hidden && p.el.querySelector('.popM [aria-pressed="true"]')?.dataset.m === 'ext:' + id;
+  extDraw(
+    p,
+    e,
+    extRun(p, e, tg, r => shown() && extDraw(p, e, r)),
+  );
+}
+/** Draw a result in a popup's canvas: the plot, the error, or that it's on its way. */
+function extDraw(p, e, r) {
   const pc = p.c;
-  const r = devicePixelRatio;
+  const dpr = devicePixelRatio;
   const W = 380;
   const H = 250;
   const g = pc.getContext('2d');
-  pc.width = W * r;
-  pc.height = H * r;
+  pc.width = W * dpr;
+  pc.height = H * dpr;
   pc.style.width = W + 'px';
   pc.style.height = H + 'px';
-  g.setTransform(r, 0, 0, r, 0, 0);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
   const say = lines => {
     g.font = '11px ' + tok('--mono');
@@ -422,23 +602,11 @@ function renderExt(p, id, tg) {
       .slice(0, 16)
       .forEach((l, k) => g.fillText(l, 6, 16 + 14 * k));
   };
-  extControls(p, e);
-  if (!e.run) {
-    say(e.err ? [`${e.name}: ${e.err}`] : ['Loading Python… (the first time takes a few seconds)']);
-    if (!e.err)
-      loadExt(e).then(
-        () => p.tgt && renderPop(p),
-        () => p.tgt && renderPop(p),
-      );
-    return;
-  }
-  let out;
-  try {
-    out = JSON.parse(pyRT.globals.get('_call')(e.run, JSON.stringify(extCtx(e, tg)), extJS));
-  } catch (err) {
-    return say([`${e.name} raised an error:`, ...pyErr(err)]);
-  }
-  plotSpec(g, out ?? {}, W, H);
+  if (!e.run)
+    return say(e.err ? [`${e.name}: ${e.err}`] : ['Loading Python… (the first time takes a few seconds)']);
+  if (!r) return say(['Running…']);
+  if (r.err) return say([`${e.name} raised an error:`, ...pyErr(r.err)]);
+  plotSpec(g, r.out, W, H);
 }
 /** The last lines of a Python traceback, without the bridge's own frame. */
 function pyErr(err) {
@@ -479,22 +647,24 @@ function runExport(p) {
       );
     return;
   }
-  let out;
-  try {
-    out = JSON.parse(pyRT.globals.get('_call')(e.run, JSON.stringify(extCtx(e, null)), extJS)) ?? {};
-  } catch (err) {
-    $('xText').value = '';
-    return say([`${e.name} raised an error:`, ...pyErr(err)], true);
-  }
-  p.out = out;
-  $('xText').value = out.text ?? '';
-  say(out.notes ?? []);
-  $('xDesc').textContent = [e.desc, out.filename].filter(Boolean).join(' · ');
+  const show = r => {
+    if (!r) return say(['Running…']);
+    if (r.err) {
+      $('xText').value = '';
+      return say([`${e.name} raised an error:`, ...pyErr(r.err)], true);
+    }
+    const out = r.out;
+    p.out = out;
+    $('xText').value = typeof out.text === 'string' ? out.text : '';
+    say(Array.isArray(out.notes) ? out.notes : []);
+    $('xDesc').textContent = [e.desc, out.filename].filter(Boolean).join(' · ');
+  };
+  show(extRun(p, e, null, r => xCur === p && $('xDlg').open && show(r)));
 }
 $('xSave').onclick = () => {
   const o = xCur?.out;
   if (!o?.text) return;
-  const name = o.filename || 'export.txt';
+  const name = String(o.filename || 'export.txt');
   download(name, new Blob([o.text], { type: 'text/plain' }));
   toast(`Exported ${name}`);
 };
@@ -517,18 +687,29 @@ function extControls(p, e) {
   const key = e?.id + JSON.stringify(e?.params) + S.map((_, k) => label(k)).join();
   if (box.dataset.k === key) return;
   box.dataset.k = key;
-  const esc = t => String(t).replace(/[&<"]/g, c => `&#${c.charCodeAt(0)};`);
+  const esc = escHTML; // (the settings are the script's to name: everything it says is escaped)
   const v = k => e.values?.[k] ?? e.params[k].default;
+  const optics = [
+    ['previous', 'previous optic'],
+    ['pupil', 'entrance pupil'],
+    ...S.map((_, n) => [n, label(n)]),
+  ];
   box.innerHTML = P.map(
     ([k, d]) =>
       `<label>${esc(d.label ?? k)} ` +
       (d.type === 'surface'
-        ? `<select data-p="${k}">${[['previous', 'previous optic'], ...(d.pupil ? [['pupil', 'entrance pupil']] : []), ...S.map((_, n) => [n, label(n)])].map(([o, l]) => `<option value="${o}"${String(v(k)) === String(o) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`
+        ? `<select data-p="${esc(k)}">${optics
+            .filter(([o]) => o !== 'pupil' || d.pupil)
+            .map(
+              ([o, l]) =>
+                `<option value="${esc(o)}"${String(v(k)) === String(o) ? ' selected' : ''}>${esc(l)}</option>`,
+            )
+            .join('')}</select>`
         : d.type === 'choice'
-          ? `<select data-p="${k}">${(d.options ?? []).map(o => `<option${String(v(k)) === String(o) ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+          ? `<select data-p="${esc(k)}">${(Array.isArray(d.options) ? d.options : []).map(o => `<option${String(v(k)) === String(o) ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
           : d.type === 'bool'
-            ? `<input type="checkbox" data-p="${k}"${v(k) ? ' checked' : ''}>`
-            : `<input data-p="${k}" inputmode="decimal" value="${esc(v(k))}">`) +
+            ? `<input type="checkbox" data-p="${esc(k)}"${v(k) ? ' checked' : ''}>`
+            : `<input data-p="${esc(k)}" inputmode="decimal" value="${esc(v(k))}">`) +
       '</label>',
   ).join('');
   box.onchange = box.oninput = ev => {

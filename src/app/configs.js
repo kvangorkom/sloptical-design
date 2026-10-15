@@ -211,7 +211,7 @@ function configCell(r, i) {
     C.list
       .map(
         (c, k) =>
-          `<button data-cfgm="${k}" aria-pressed="${ids.includes(k)}" style="--hue:${cfgHue(k)}" title="${c.name.replace(/[&"<]/g, ch => `&#${ch.charCodeAt(0)};`)}: ${ids.includes(k) ? 'has this surface (click to take it out)' : 'doesn’t have it (click to add it)'}">${cfgLetter(k)}</button>`,
+          `<button data-cfgm="${k}" aria-pressed="${ids.includes(k)}" style="--hue:${cfgHue(k)}" title="${escHTML(c.name)}: ${ids.includes(k) ? 'has this surface (click to take it out)' : 'doesn’t have it (click to add it)'}">${cfgLetter(k)}</button>`,
       )
       .join('') +
     '</td>'

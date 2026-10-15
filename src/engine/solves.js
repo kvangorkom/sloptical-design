@@ -1,7 +1,8 @@
 // solves.js — Solves and focus locks: values solved so a beam focuses or collimates, and conic foci pinned to points.
 
-(function (Optics) {
-  'use strict';
+(function engineSolves(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineSolves)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { add, cross, dot, euler, unit, angleAt, foci, build, is3D, angle, curv, inFocus, lstsq, secant } =
     Optics;
 

@@ -1,7 +1,8 @@
 // python.js — Python export: scripts that rebuild the design in batoid or optiland.
 
-(function (Optics) {
-  'use strict';
+(function enginePython(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(enginePython)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { carry, cross, build, is3D, start } = Optics;
 
   /** Python scripts that rebuild the system in batoid (lib 'batoid') or optiland (lib 'optiland'), with every surface placed

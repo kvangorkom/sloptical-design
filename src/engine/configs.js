@@ -23,8 +23,9 @@
 //
 // A design without `configs` has one configuration and is exactly as before.
 
-(function (Optics) {
-  'use strict';
+(function engineConfigs(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineConfigs)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
 
   const clone = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);

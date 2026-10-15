@@ -29,8 +29,9 @@
 //     source point's x and y. Free lock points can be [x, y, z].
 // Planar designs are traced in 3D too, so skew rays give real footprints and spots.
 
-(function (Optics) {
-  'use strict';
+(function engineTrace(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineTrace)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { add, carry, dot, frameRot, inFrame, rot, toL, toW, turn, unit, angleAt, atAngle, roots, sag } =
     Optics;
 

@@ -16,7 +16,8 @@ Press **H** in the app for the keys and a short guide to every feature.
 - **Served locally:** `npm run serve` (or `python3 -m http.server`), then open http://localhost:8000. Served this way,
   the page also loads the Python scripts in `extensions/`.
 - **As a desktop app:** `pip install pywebview`, then `python3 optic_app.py [design.json ...]`. This is the same page
-  in a native window, where Save writes straight back to the file on disk. To package it as a double-clickable app:
+  in a native window, where Save writes straight back to the file on disk. The page can reach only the files you
+  open or save there. To package it as a double-clickable app:
   ```sh
   pyinstaller --windowed --name "Optic Sketch" --distpath app-dist --workpath app-build \
     --add-data "index.html:." --add-data "src:src" --add-data "extensions:extensions" optic_app.py
@@ -25,6 +26,16 @@ Press **H** in the app for the keys and a short guide to every feature.
   that rewrites the file updates the view. `optic_live.py` explains more.
 
 Lengths are in mm, angles in degrees and wavelengths in µm.
+
+## Safety
+
+- **Extensions are code:** load only ones you trust, as you would any script. They run in a sandbox: a Web Worker that
+  can see the design it's given and the internet, but not the page, what it stores, or your files.
+- **Designs and links are data:** opening someone's design file or link runs nothing. Names in a design are always
+  shown as text.
+- **The desktop app** lets the page read and write only files you opened or saved with it (or named when starting it).
+- **`optic_live.py serve`** answers only this computer, and lets other sites read only the watched file.
+- Python (Pyodide) is fetched from jsDelivr and checked against hashes pinned in `src/app/extensions.js`.
 
 ## Layout
 

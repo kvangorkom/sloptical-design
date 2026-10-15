@@ -1,7 +1,8 @@
 // zemax.js — Zemax OpticStudio interchange: export a .zmx lens file, and best-effort import of one.
 
-(function (Optics) {
-  'use strict';
+(function engineZemax(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineZemax)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { add, carry, cross, dot, euler, turn, unit, angleAt, build, grid, hit, angle, efl, secant } = Optics;
 
   /** Zemax OpticStudio sequential lens file (.zmx) for the current geometry: surfaces, conics, spacings, glasses, fields,

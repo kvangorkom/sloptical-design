@@ -2,8 +2,9 @@
 //
 // Plain arrays [x, y, z]. Angles are in degrees unless a name says otherwise.
 
-(function (Optics) {
-  'use strict';
+(function engineVector(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineVector)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
 
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 

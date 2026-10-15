@@ -3,8 +3,9 @@
 // A surface is described in its own local frame (see trace.js for how frames are placed). Sag:
 //   z = c r² / (1 + √(1 − (1 + k) c² r²)),  c = 1/R (R = 0: flat).
 
-(function (Optics) {
-  'use strict';
+(function engineConic(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineConic)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { add, dot, toL, toW } = Optics;
 
   const sag = (c, k, r2) => (c * r2) / (1 + Math.sqrt(1 - (1 + k) * c * c * r2));

@@ -1,7 +1,8 @@
 // edit.js — Editing operations on rows: moving, turning and tilting optics while keeping the rest of the design in place.
 
-(function (Optics) {
-  'use strict';
+(function engineEdit(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineEdit)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { add, dot, euler, turn, unit, angleAt, atAngle, sag, build, lstsq, unvary } = Optics;
 
   /** Drag surface s: its parent conic moves rigidly by D = Q − P (P its current axis hit point), keeping its orientation.

@@ -194,8 +194,8 @@ function renderPop(p) {
       : `${R0 > 0 ? '+' : ''}${nf(R0)} mm, ${R0 > 0 ? 'converging' : 'diverging'}`;
   q('.popT').innerHTML =
     (surf
-      ? `${label(i)} <small>· ${S[i].type}`
-      : `Beam <small>· ${nf(t.s)} mm after ${j ? label(j - 1) : 'the pupil'}`) +
+      ? `${escHTML(label(i))} <small>· ${S[i].type}`
+      : `Beam <small>· ${nf(t.s)} mm after ${j ? escHTML(label(j - 1)) : 'the pupil'}`) +
     (on ? '' : ' · click to pin') +
     '</small>';
   q('.popT').title = on && !p.docked ? 'Drag the title to keep this open' : '';

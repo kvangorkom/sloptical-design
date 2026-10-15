@@ -577,7 +577,8 @@
           Python scripts that add tabs to the beam and surface popups, or export formats to the File menu. The
           <code>.py</code> files in the <code>extensions</code> folder next to this page are loaded by
           default; others can be loaded from anywhere. They run in your browser (Pyodide, loaded from jsDelivr
-          the first time one is used). See the README for the interface.
+          the first time one is used), sandboxed: a script sees the design it's given but not this page, its
+          storage, or your files. Still, load only scripts you trust. See the README for the interface.
         </p>
         <div id="extList"></div>
         <menu style="justify-content: space-between">

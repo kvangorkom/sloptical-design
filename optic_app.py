@@ -12,7 +12,10 @@ saving:
 * Save writes straight back to the design's own file on disk; Save as, Open and the exports use the native dialogs.
 * Designs named on the command line open in tabs.
 * File > Watch file for changes follows a file on disk directly (no server).
-* Extensions are read from the extensions folder next to this file.
+* Extensions are read from the extensions folder next to this file. They run in the page's Python worker, which can't
+  reach this API.
+* The page can read and write only files you've opened or saved here (or named on the command line); the app remembers
+  them between runs (~/.optic_sketch/files.json). Saving to any other file asks first, with the Save dialog.
 * Closing the window with unsaved changes asks first.
 
 Open designs, settings and extension settings are kept between runs (the page's storage lives in ~/.optic_sketch).
@@ -21,6 +24,7 @@ each start, so an update to any of them always takes effect together (the web vi
 Packaging as a double-clickable app is optional; the README gives the PyInstaller command.
 """
 import base64
+import json
 import os
 import re
 import socket
@@ -31,6 +35,7 @@ from pathlib import Path
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))   # (a PyInstaller bundle unpacks to _MEIPASS)
 PORT = 47361              # a fixed local port keeps the page's storage (open designs, settings) the same from run to run
 STORAGE = Path.home() / ".optic_sketch"
+GRANTS_KEPT = 500         # files remembered as opened or saved here (the most recent)
 DESIGN_TYPES = ("Optic Sketch design (*.json)", "All files (*.*)")
 
 
@@ -44,11 +49,45 @@ def _info(p, text=None):
 
 class Api:
     """What the page can ask of the app, as window.pywebview.api.<method>(...) returning a promise. Paths are absolute.
-    A cancelled dialog returns None; errors (a file that can't be read or written) reject the promise with the message."""
+    A cancelled dialog returns None; errors (a file that can't be read or written) reject the promise with the message.
+
+    The page reaches only files you chose: ones named on the command line, opened, or saved with a dialog. They're
+    remembered (STORAGE/files.json, written only here) so a design reopens and saves in place next time. Anything else
+    the page asks for is refused (reading) or goes through the Save dialog (writing), so a page that went wrong, or a
+    design file built to misuse it, can't touch the rest of your files."""
 
     def __init__(self, files=()):
         self._window = None                          # the pywebview window (private: pywebview exposes public attributes)
         self._files = [str(Path(f).expanduser().resolve()) for f in files]
+        self._granted = self._load_grants()
+        for f in self._files:
+            self._grant(f)
+
+    @staticmethod
+    def _grants_file():
+        return STORAGE / "files.json"
+
+    def _load_grants(self):
+        try:
+            return [str(p) for p in json.loads(self._grants_file().read_text(encoding="utf-8")) if isinstance(p, str)]
+        except (OSError, ValueError):
+            return []
+
+    def _grant(self, path):
+        """Remember path (resolved) as one of yours."""
+        p = str(Path(path).expanduser().resolve())
+        self._granted = [q for q in self._granted if q != p][-(GRANTS_KEPT - 1):] + [p]
+        try:
+            self._grants_file().parent.mkdir(parents=True, exist_ok=True)
+            self._grants_file().write_text(json.dumps(self._granted, indent=0), encoding="utf-8")
+        except OSError:
+            pass                                     # (kept for this run at least)
+        return p
+
+    def _mine(self, path):
+        """path resolved, if it's one of yours, else None."""
+        p = str(Path(path).expanduser().resolve())
+        return p if p in self._granted else None
 
     def _dialog(self, kind, directory="", name=""):
         import webview
@@ -61,12 +100,12 @@ class Api:
     def startup_files(self):
         """The designs named on the command line, read once (then forgotten)."""
         files, self._files = self._files, []
-        return [self.read(f) for f in files]
+        return [self._read(f) for f in files]
 
-    def read(self, path):
+    def _read(self, path):
         return _info(path, Path(path).read_text(encoding="utf-8"))
 
-    def write(self, path, text):
+    def _write(self, path, text):
         """Write text to path atomically (a temporary file in the same folder, then a rename), so a crash or a watcher
         never sees half a file."""
         p = Path(path)
@@ -82,10 +121,18 @@ class Api:
             raise
         return _info(p)
 
+    def write(self, path, text):
+        """Save a design to its own file. One that wasn't opened or saved here goes through the Save dialog instead
+        (offering that name and folder), so it's your choice; None if cancelled."""
+        p = self._mine(path)
+        if p:
+            return self._write(p, text)
+        return self.save_as(Path(path).name, text, str(Path(path).parent))
+
     def open(self, directory=""):
         """Ask for a design to open; returns it (path, name, text) or None."""
         path = self._dialog("open", directory)
-        return self.read(path) if path else None
+        return self._read(self._grant(path)) if path else None
 
     def save_as(self, name, text, directory=""):
         """Ask where to save a design (named name.json by default), then write it there."""
@@ -94,7 +141,7 @@ class Api:
             return None
         if not Path(path).suffix:
             path += ".json"
-        return self.write(path, text)
+        return self._write(self._grant(path), text)
 
     def save_bytes(self, name, data_b64, directory=""):
         """Ask where to save an export (a figure, a script, a .zmx), then write its bytes there."""
@@ -105,12 +152,16 @@ class Api:
         return _info(path)
 
     def changed(self, path, mtime):
-        """For watching a file: the file again if it changed since mtime (ns), else None; {"missing": True} if it's gone."""
+        """For watching a file (one of yours): the file again if it changed since mtime (ns), else None;
+        {"missing": True} if it's gone."""
+        p = self._mine(path)
+        if not p:
+            raise PermissionError(f"{Path(path).name} wasn't opened here: open it (File ▸ Open) to follow it")
         try:
-            st = Path(path).stat()
+            st = Path(p).stat()
         except FileNotFoundError:
             return {"missing": True}
-        return None if st.st_mtime_ns == mtime else self.read(path)
+        return None if st.st_mtime_ns == mtime else self._read(p)
 
     def extensions(self):
         """Every .py in the extensions folder, as {file name: source}."""

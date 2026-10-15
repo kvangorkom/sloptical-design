@@ -1,7 +1,8 @@
 // analysis.js — Analysis of traced rays: spots, NA, wavefront fits, paraxial focus, EFL, conjugate images, stigmatic tests.
 
-(function (Optics) {
-  'use strict';
+(function engineAnalysis(Optics) {
+  if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineAnalysis)); // (extensions' worker rebuilds the engine from these)
+  ('use strict');
   const { add, cross, dot, toL, unit, angleAt, foci, sag, bundle, start, trace } = Optics;
 
   /** Centroid and RMS radius of 2D points. */
