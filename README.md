@@ -1,10 +1,10 @@
 # Sloptical Design
 
-A browser sketchpad for quickly laying out optical systems: mirrors, lenses and off-axis conics, traced exactly in 3D,
-with spots, footprints and wavefronts at any plane. Designs export to Zemax, batoid and optiland, and to a vector PDF
-figure.
+A vibe-coded (Claude Opus 5.5), in-browser tool for sketching out simple optical systems with a sorta intuitive interface. Assume the results are wrong until you've exported them to some other, human-coded raytrace tool!
 
-It is a sketchpad, not a design code: sketch here, then check the design properly in another tool. Bugs may abound!
+There are many bugs—use with caution.
+
+![alt text](image.png)
 
 **Try it:** https://kvangorkom.github.io/sloptical-design/
 
@@ -24,31 +24,6 @@ Press **H** in the app for the keys and a short guide to every feature.
   ```
 - **Driven from Python:** `python3 optic_live.py serve design.json` opens the page watching the file, so any script
   that rewrites the file updates the view. `optic_live.py` explains more.
-
-Lengths are in mm, angles in degrees and wavelengths in µm.
-
-## Safety
-
-- **Extensions are code:** load only ones you trust, as you would any script. They run in a sandbox: a Web Worker that
-  can see the design it's given and the internet, but not the page, what it stores, or your files.
-- **Designs and links are data:** opening someone's design file or link runs nothing. Names in a design are always
-  shown as text.
-- **The desktop app** lets the page read and write only files you opened or saved with it (or named when starting it).
-- **`optic_live.py serve`** answers only this computer, and lets other sites read only the watched file.
-- Python (Pyodide) is fetched from jsDelivr and checked against hashes pinned in `src/app/extensions.js`.
-
-## Layout
-
-```
-index.html          the page
-src/engine/         the ray tracer and its analysis (no DOM; runs in Node too)
-src/app/            the user interface: drawing, editing, popups, files, PDF export
-extensions/         example Python extensions (see extensions/README.md)
-optic_app.py        desktop app
-optic_live.py       live view driven from a script
-build.js            single-file build for GitHub Pages (dist/index.html)
-tests/              node --test
-```
 
 ## GitHub Pages
 
