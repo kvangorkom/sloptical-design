@@ -533,10 +533,43 @@ function settleRide(ri) {
 }
 /** Stigmatic's mode changed: its locks are made again in the new mode, each mirror keeping the image it has now. Mirrors
  *  it hadn't locked (the TMA's, say, whose aberrations cancel between them rather than each imaging perfectly) are left be. */
-function restigmatize() {
-  const own = sys.rows.flatMap((r, ri) => (ri && stigLocked(ri) ? [ri] : []));
+function restigmatize(only = () => true) {
+  const own = sys.rows.flatMap((r, ri) => (ri && stigLocked(ri) && only(ri) ? [ri] : []));
   own.forEach(ri => delete sys.rows[ri].lock);
   return own.filter(ri => stigLock(ri, S)).length;
+}
+/** Once a design goes 3D (an edit turns or moves something out of the y–z plane), Stigmatic's locks vary the 3D pose too
+ *  (tilt y, clock), as they would have if made in 3D, so their mirrors can keep imaging perfectly out of the plane. Not a
+ *  lock whose values were chosen by hand (lock.picked). Returns whether any changed. */
+function stig3D(rows = sys.rows) {
+  if (!$('stig').checked || !Optics.is3D(rows)) return false;
+  let n = 0;
+  rows.forEach((r, ri) => {
+    const L = r.lock;
+    if (!ri || !L || L.picked || !stigLocked(ri)) return;
+    const add = Optics.stigVary(rows, ri).filter(
+      k => (k === 'tiltY' || k === 'clock') && !L.vary?.includes(k),
+    );
+    if (!add.length) return;
+    L.vary = [...(L.vary ?? []), ...add];
+    add.forEach(k => delete r.solve?.[k]); // one owner per value
+    n++;
+  });
+  return n > 0;
+}
+/** Which mode Stigmatic's lock on row ri was made in: 'follow' (its image rides), 'hold' (held), or null (no image pinned). */
+function lockMode(ri) {
+  const pins = [sys.rows[ri]?.lock?.f1, sys.rows[ri]?.lock?.f2];
+  if (pins.some(t => t?.ride || t?.rideAfter)) return 'follow';
+  if (pins.some(t => (t?.at === 'pt' && t.p) || (t?.at === 'inf' && t.u))) return 'hold';
+  return null;
+}
+/** A design just opened keeps the locks it was saved with; with Stigmatic on, those made in the other mode are made again in
+ *  this one (each mirror keeping the image it has), so what moving an optic does matches the mode shown. Returns how many. */
+function matchStigMode() {
+  if (!$('stig').checked) return 0;
+  const m = stigMode();
+  return restigmatize(ri => (lockMode(ri) ?? m) !== m);
 }
 function insertAt(mx, my, kind) {
   const hit = axisAt(mx, my);

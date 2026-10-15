@@ -194,6 +194,20 @@ function load(o, keepView) {
   }
   renderTable();
   update();
+  if (!hist.lock) {
+    const was = JSON.stringify(sys);
+    const clean = was === (file.saved ?? file.base);
+    if (matchStigMode()) {
+      update();
+      const json = JSON.stringify(sys); // the same design, its locks remade in this mode: not an edit
+      if (clean) file[file.saved != null ? 'saved' : 'base'] = json;
+      if (hist.cur === was) {
+        clearTimeout(hist.t);
+        hist.cur = json;
+        record(json);
+      }
+    }
+  }
 }
 
 /** Trace sys.rows: the surfaces S, axis segments AX, fans T, grids B (and each surface's drawn extent), cones C, chief-ray
@@ -263,6 +277,7 @@ function update() {
   fy = sys.flip?.ud ? -1 : 1;
   if (!hist.lock) {
     const pre = sys.rows.map(ownVals);
+    stig3D();
     fails = Optics.applySolves(sys.rows);
     guard(pre);
     if (sys.configs) {

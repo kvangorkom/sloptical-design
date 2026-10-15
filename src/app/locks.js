@@ -176,6 +176,7 @@ $('lock').onclick = e => {
   const ri = lk.ri;
   const r = sys.rows[ri];
   const L = (r.lock ??= { vary: [] });
+  L.picked = true; // chosen by hand: Stigmatic leaves it as it is (stig3D)
   if ((L.vary ??= []).includes(k)) L.vary = L.vary.filter(v => v !== k);
   else {
     const pick = Optics.varyPick(sys.rows, ri, [k, ...[...L.vary].reverse()]);
