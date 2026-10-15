@@ -28,7 +28,8 @@ $('fileMenu').onclick = e => {
     pdf: figureDialog,
     ext: extDialog,
     opts: optionsDialog,
-    help: helpDialog,
+    help: () => helpDialog('keys'),
+    guide: () => helpDialog('guide'),
   })[f]();
 };
 $('fileMenu').onkeydown = e => {

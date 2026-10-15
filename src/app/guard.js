@@ -23,6 +23,22 @@ function guard(pre) {
     return;
   } // a new design, or optics added or removed: nothing to compare with
   const prev = JSON.parse(good.json).rows;
+  // a flat mirror given a radius takes up imaging perfectly: locked to image its incoming focus onto its image now
+  const curved = sys.rows.flatMap((r, ri) =>
+    ri &&
+    r.type === 'mirror' &&
+    r.R &&
+    !r.lock?.f1 &&
+    !r.lock?.f2 &&
+    prev[ri]?.type === 'mirror' &&
+    !prev[ri].R
+      ? [ri]
+      : [],
+  );
+  if (curved.length) {
+    const St = Optics.build(sys.rows);
+    if (curved.filter(ri => stigLock(ri, St)).length) fails = Optics.applySolves(sys.rows);
+  }
   const Sg = Optics.build(prev);
   const broken = st => good.stig.flatMap((v, i) => (v === true && st[i] === false ? [i] : []));
   let now = stigOf(Optics.build(sys.rows));
@@ -40,7 +56,9 @@ function guard(pre) {
     now = stigOf(Optics.build(sys.rows));
     bad = broken(now);
   }
-  const lost = [...fails].filter(f => f.endsWith('lock') && !good.fails.has(f)).map(f => parseInt(f) - 1);
+  const lost = [...fails]
+    .filter(f => (f.endsWith('lock') || f.endsWith('room')) && !good.fails.has(f))
+    .map(f => parseInt(f) - 1); // (room: the beam no longer reaches a flat held in the room)
   if (bad.length || lost.length) {
     const g = JSON.parse(good.json);
     for (const k of Object.keys(sys)) delete sys[k];

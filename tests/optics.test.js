@@ -1847,10 +1847,18 @@ describe('conics used at and past 90° (normal ⊥ the parent axis)', () => {
     ];
     assert.equal(O.applySolves(rows).size, 0);
     near(rows[1].d, -90, 1e-9, 'symmetric: the equator');
+    // the pin on the focal plane (downstream: a loop) is held as a point, and the focal plane focuses on it; moving the
+    // focal plane out is moving that point out along the axis (as dragging the plane does)
+    const L = rows[1].lock.f2;
+    assert.equal(L.at, 'pt');
+    assert.deepEqual(rows[1].solve, { t: { type: 'focus' } });
+    const S0 = O.build(rows);
     const seen = [];
     for (const t of [150, 200, 250, 350, 450, 300]) {
-      rows[1].t = t;
+      const q = S0[0].P.map((v, i) => v + t * S0[0].uOut[i]);
+      L.p = [q[1], q[2]];
       assert.equal(O.applySolves(rows).size, 0, `t ${t}`);
+      near(rows[1].t, t, 1e-6, `t ${t}: the focal plane on the image`);
       seen.push(rows[1].d);
       const S = O.build(rows);
       for (const [x, y] of O.grid(5, 5))

@@ -20,7 +20,7 @@ const PY_SRI = {
 const PYBOOT = [
   'import json, math',
   'class Ctx(dict):',
-  '    """The popup\'s context: a dict of data plus ray-trace helpers (see extensions/README.md in Optic Sketch)."""',
+  '    """The popup\'s context: a dict of data plus ray-trace helpers (see extensions/README.md in Sloptical Design)."""',
   '    def trace(self, field, px, py):',
   '        """States of the ray from pupil point (px, py) of the field, one per surface reached: dicts p, u (world), n, L."""',
   '        return json.loads(self._js.trace(field, px, py))',

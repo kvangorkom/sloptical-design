@@ -1,14 +1,47 @@
 // panel.js — the surface panel: docked at the bottom or the side (resizable), or in its own window.
 $('stig').checked = pref('optic_stig') !== 'off';
 setTimeout(() => showWatch(pref('optic_watch') === 'on')); // (after the first layout)
+$('stigMode').value = pref('optic_stigmode') === 'follow' ? 'follow' : 'hold';
+$('stigMode').hidden = !$('stig').checked;
 $('stig').onchange = e => {
   pref('optic_stig', e.target.checked ? 'on' : 'off');
+  $('stigMode').hidden = !e.target.checked;
   if (!e.target.checked) return toast('Stigmatic off (existing locks stay)');
   commit();
   const n = stigmatize();
   update();
   toast(n ? `Stigmatic: ${n} mirror${n > 1 ? 's' : ''} locked to image perfectly` : 'Stigmatic on');
 };
+$('stigMode').onchange = e => {
+  pref('optic_stigmode', e.target.value);
+  if (!$('stig').checked) return;
+  commit();
+  const n = restigmatize();
+  update();
+  const follow = e.target.value === 'follow';
+  const how =
+    n === 1
+      ? follow
+        ? 'carries its focus'
+        : 'holds its focus'
+      : follow
+        ? 'carry their foci'
+        : 'hold their foci';
+  toast(n ? `Stigmatic: ${n} mirror${n > 1 ? 's' : ''} ${how}` : `Stigmatic: mirrors ${how}`);
+};
+// S: Stigmatic between holding foci and foci following (with Stigmatic off, it sets the mode it will use)
+onDoc('keydown', e => {
+  if (e.key.toLowerCase() !== 's' || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  if (e.target.closest?.(TYPING + ', dialog')) return;
+  e.preventDefault();
+  const m = $('stigMode');
+  m.value = m.value === 'follow' ? 'hold' : 'follow';
+  if ($('stig').checked) m.onchange({ target: m });
+  else {
+    pref('optic_stigmode', m.value);
+    toast(`Stigmatic (off): will ${m.value === 'follow' ? 'carry foci with their mirrors' : 'hold foci'}`);
+  }
+});
 function dock(mode) {
   if (mode === 'window') return popOut();
   if (tw) {
@@ -97,7 +130,7 @@ function popOut() {
   hideJog();
   d.open();
   d.write(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Surfaces · Optic Sketch</title>${[...document.querySelectorAll('link[rel=stylesheet], style')].map(e => (e.href ? `<link rel="stylesheet" href="${e.href}">` : e.outerHTML)).join('')}</head><body class="popwin"></body></html>`,
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Surfaces · Sloptical Design</title>${[...document.querySelectorAll('link[rel=stylesheet], style')].map(e => (e.href ? `<link rel="stylesheet" href="${e.href}">` : e.outerHTML)).join('')}</head><body class="popwin"></body></html>`,
   );
   d.close();
   const th = document.documentElement.dataset.theme;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""optic_live.py — drive Optic Sketch from Python (standard library only).
+"""optic_live.py — drive Sloptical Design from Python (standard library only).
 
-Optic Sketch can watch a system file and redraw whenever it changes, so any script that rewrites the file becomes a live
+Sloptical Design can watch a system file and redraw whenever it changes, so any script that rewrites the file becomes a live
 view. The file is the same JSON that File ▸ Save writes: {"fields", "rays", "grid", "lambda", "rows": [pupil, S1, …]},
 each row with R, k, d, tilt, t, n, ap and optionally tiltY, clock, oa, solve, pivot and lock (the row format is described
 at the top of src/engine/trace.js, and solves and locks in src/engine/solves.js). Solves and focus locks run in the
@@ -65,7 +65,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if not self._local():
-            return self.send_error(403, 'Optic Sketch serves only this computer (http://localhost)')
+            return self.send_error(403, 'Sloptical Design serves only this computer (http://localhost)')
         super().do_GET()
 
     def do_HEAD(self):
@@ -97,7 +97,7 @@ def serve(path, port=8000, browser=True):
         raise OSError(f'no free port in {port}–{port + 19}')
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f'http://localhost:{p}/index.html?watch=/live/{os.path.basename(path)}'
-    print('Optic Sketch:', url, flush=True)
+    print('Sloptical Design:', url, flush=True)
     print('Watched file:', f'http://localhost:{p}/live/{os.path.basename(path)}', flush=True)
     if browser:
         webbrowser.open(url)

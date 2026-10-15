@@ -126,7 +126,7 @@ async function save(as) {
         h = null;
       h ??= await showSaveFilePicker({
         suggestedName: file.name,
-        types: [{ description: 'Optic Sketch system', accept: { 'application/json': ['.json'] } }],
+        types: [{ description: 'Sloptical Design system', accept: { 'application/json': ['.json'] } }],
       });
       const w = await h.createWritable();
       await w.write(txt);
@@ -154,7 +154,7 @@ async function save(as) {
     return showText(`Save ${name}`, name, txt, [
       'This page is embedded in another one, which may block downloads. If no file arrived, copy the text below into a file named ' +
         name +
-        ', or open Optic Sketch on its own (index.html, or its GitHub Pages site) to save files directly.',
+        ', or open Sloptical Design on its own (index.html, or its GitHub Pages site) to save files directly.',
     ]);
   toast(`Downloaded ${name}`);
 }
@@ -179,7 +179,7 @@ function openText(text, name, { handle = null, path = null } = {}) {
     o = JSON.parse(text);
     if (!o?.rows?.length) throw 0;
   } catch {
-    return toast(`${name} is not an Optic Sketch system (JSON with rows)`);
+    return toast(`${name} is not a Sloptical Design system (JSON with rows)`);
   }
   const same = path && docs.find(d => (d === doc ? file.path : d.file.path) === path); // already open: switch to it
   if (same) {
@@ -212,7 +212,7 @@ async function openSystem() {
   if (window.showOpenFilePicker)
     try {
       const [h] = await showOpenFilePicker({
-        types: [{ description: 'Optic Sketch system', accept: { 'application/json': ['.json'] } }],
+        types: [{ description: 'Sloptical Design system', accept: { 'application/json': ['.json'] } }],
       });
       return read(await h.getFile(), h);
     } catch (e) {

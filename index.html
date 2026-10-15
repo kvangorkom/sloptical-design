@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-    <title>Optic Sketch</title>
+    <title>Sloptical Design</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 10h12M2 16h12M2 22h12' stroke='%230b7a8a' stroke-width='2'/%3E%3Cpath d='M14 4q6 12 0 24' fill='none' stroke='%2317222b' stroke-width='3'/%3E%3Cpath d='M15 10 30 16M15 16h15M15 22l15-6' stroke='%230b7a8a' stroke-width='2'/%3E%3C/svg%3E"
@@ -16,7 +16,7 @@
   </head>
   <body>
     <header>
-      <b>Optic Sketch</b><span id="docName" title="Current file (• unsaved changes)"></span>
+      <b>Sloptical Design</b><span id="docName" title="Current file (• unsaved changes)"></span>
       <div class="menu">
         <button id="fileBtn" aria-haspopup="menu" aria-expanded="false">File</button>
         <div class="menuList" id="fileMenu" role="menu" hidden>
@@ -28,7 +28,7 @@
           ><button
             role="menuitem"
             data-f="link"
-            title="A link that opens this design (and its configurations) in Optic Sketch: paste it anywhere"
+            title="A link that opens this design (and its configurations) in Sloptical Design: paste it anywhere"
           >
             Copy link to this design
           </button>
@@ -54,7 +54,8 @@
             title="How the view draws things, such as how overlapping cones mix"
           >
             Options…<kbd data-k=","></kbd></button
-          ><button role="menuitem" data-f="help">Help and shortcuts<kbd>H</kbd></button>
+          ><button role="menuitem" data-f="help">Keyboard shortcuts<kbd>H</kbd></button
+          ><button role="menuitem" data-f="guide">Features guide…</button>
           <button role="menuitem" data-f="zin">Import Zemax (.zmx)…</button>
         </div>
       </div>
@@ -167,9 +168,16 @@
         </div>
       </div>
       <label
-        title="Keep curved mirrors imaging perfectly (point to point). Each mirror reshapes to follow the beam coming in; drag its square to move where it images. Edits that would break this are refused."
+        title="Keep curved mirrors imaging perfectly (point to point): each keeps a focus on the beam coming in. Edits that would break this are refused."
         ><input id="stig" type="checkbox" /> Stigmatic</label
+      ><select
+        id="stigMode"
+        aria-label="When optics move, Stigmatic (S switches)"
+        title="What moving an optic does. Holds foci: each image stays where it is in the room, and mirrors reshape to keep it there (flats on the way stay put too, the beam sliding across them). Foci follow: each image moves with its mirror (it keeps its place relative to where the beam hits it), so moving or tilting a mirror carries its image and focal plane along. Either way the mirror's shape is solved to image perfectly. Drag a focus's square to move it. S switches."
       >
+        <option value="hold">holds foci</option>
+        <option value="follow">foci follow</option>
+      </select>
       <span class="seg" id="drawM" role="group" aria-label="Draw a shape"
         ><button
           data-s="rect"
@@ -550,23 +558,20 @@
     </dialog>
     <dialog id="helpDlg" aria-labelledby="helpH">
       <form method="dialog">
-        <h2 id="helpH">Optic Sketch: help</h2>
-        <p class="warnbox">
-          This tool is for rapidly sketching optical designs, which can then be exported to other tools for
-          rigorous analysis. It is a sketchpad, not a design code: check anything that matters elsewhere. Bugs
-          may abound!
-        </p>
-        <div class="cols">
-          <div>
-            <h3>Keys and mouse</h3>
-            <dl id="helpKeys"></dl>
-          </div>
-          <div>
-            <h3>Features</h3>
-            <ul id="helpFeat"></ul>
-          </div>
+        <h2 id="helpH">Keys and mouse</h2>
+        <dl id="helpKeys"></dl>
+        <div id="helpFeatBox" hidden>
+          <p class="warnbox">
+            This tool is for rapidly sketching optical designs, which can then be exported to other tools for
+            rigorous analysis. It is a sketchpad, not a design code: check anything that matters elsewhere.
+            Bugs may abound!
+          </p>
+          <ul id="helpFeat"></ul>
         </div>
-        <menu><button value="ok" class="primary">Close</button></menu>
+        <menu style="justify-content: space-between">
+          <button type="button" id="helpOther">Features guide</button
+          ><button value="ok" class="primary">Close</button>
+        </menu>
       </form>
     </dialog>
 

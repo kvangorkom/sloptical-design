@@ -3,7 +3,24 @@
 (function engineEdit(Optics) {
   if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineEdit)); // (extensions' worker rebuilds the engine from these)
   ('use strict');
-  const { add, dot, euler, turn, unit, angleAt, atAngle, sag, build, lstsq, unvary } = Optics;
+  const { add, dot, euler, rot, turn, unit, angleAt, atAngle, sag, build, lstsq, unvary, fromRide, toRide } =
+    Optics;
+  /** Row ri's riding image pin (an image that moves with the mirror), or null. */
+  const ridePin = (rows, ri) => [rows[ri]?.lock?.f1, rows[ri]?.lock?.f2].find(t => t?.ride) ?? null;
+  /** After an edit that moved surface s by `move` (a function of world points), carry its riding image along: it goes
+   *  where the move takes it, as a point (or, at infinity, as a direction). R is the edited rows, S0 the system before. */
+  function carryRide(R, S0, s, move) {
+    const pin = ridePin(R, s + 1);
+    if (!pin) return R;
+    const S1 = build(R);
+    const Q0 = fromRide(S0, s, pin.ride);
+    if (pin.at === 'inf') {
+      const D = add(Q0, S0[s].P, -1);
+      const D1 = add(move(add(S0[s].P, D)), move(S0[s].P), -1); // the direction, turned as the optic turned
+      pin.ride = toRide(S1, s, add(S1[s].P, D1));
+    } else pin.ride = toRide(S1, s, move(Q0));
+    return R;
+  }
 
   /** Drag surface s: its parent conic moves rigidly by D = Q − P (P its current axis hit point), keeping its orientation.
    *  Nothing upstream changes, so the beam stays where it is. The move along the incoming axis goes into the distance in
@@ -12,7 +29,14 @@
    *  moves by exactly D, tilt and pivots included. A flat, or `along`, moves along the axis only. The optic's own focus
    *  locks then re-solve with their other varied values (in applySolves); the drag sets the distance in and off-axis, so a
    *  solve or lock variation on those is removed. Leaves `rows` unchanged; returns the new rows. */
-  function moveOptic(rows, s, Q, { along = false } = {}) {
+  function moveOptic(rows, s, Q, opts = {}) {
+    const ride = ridePin(rows, s + 1);
+    const R = moveOptic0(rows, s, Q, opts);
+    if (!ride) return R;
+    const D = add(Q, build(rows)[s].P, -1);
+    return carryRide(R, build(rows), s, p => add(p, D)); // the image moves with the mirror
+  }
+  function moveOptic0(rows, s, Q, { along = false } = {}) {
     const R = structuredClone(rows);
     const S0 = build(rows);
     const gap = R[s];
@@ -38,7 +62,7 @@
     };
     if (me.oa !== 'angle') me.d -= dot(D, e);
     if (me.solve) delete me.solve.d;
-    unvary(R, s + 1, 'd'); // first guess: the beam lands D·e lower on the parent
+    if (!ridePin(R, s + 1)) unvary(R, s + 1, 'd'); // first guess: the beam lands D·e lower on the parent (a riding image's lock keeps solving it)
     for (let it = 0, r = res(); it < 30 && Math.hypot(...r) > 1e-12 * (1 + Math.hypot(...target)); it++) {
       const h = 1e-6 * Math.max(1, Math.abs(gap.t));
       const k = 1e-6 * Math.max(1, Math.abs(me.d));
@@ -69,10 +93,11 @@
     const ex = q.ex ?? [1, 0, 0];
     const sign = Math.sign(me.d) || 1;
     const rad = Math.PI / 180;
-    for (const k of ['d', 'clock']) {
-      if (me.solve) delete me.solve[k];
-      unvary(R, s + 1, k);
-    }
+    if (!ridePin(R, s + 1))
+      for (const k of ['d', 'clock']) {
+        if (me.solve) delete me.solve[k];
+        unvary(R, s + 1, k);
+      } // (a riding image's lock keeps solving them)
     const c0 = (me.clock || 0) * rad;
     const X0 = add(
       ex.map(v => v * Math.cos(c0)),
@@ -146,6 +171,7 @@
       Fin.map(f => F.map(g => dot(f, g))),
       [r.tilt, r.tiltY || 0, r.clock || 0],
     );
+    if (ridePin(R, s + 1)) return carryRide(R, build(rows), s, p => add(q.P, turn(add(p, q.P, -1), k, a))); // a riding image turns with the optic, about its hit point; its lock keeps solving the angles
     for (const key of ['tilt', 'tiltY', 'clock']) {
       if (r.solve) delete r.solve[key];
       unvary(R, s + 1, key);
@@ -186,7 +212,7 @@
    *  where the beam lands on the parent is the lock's to choose, together with R, k and whatever else it varies). */
   const heldD = (rows, ri) => {
     const L = rows[ri]?.lock;
-    return !!(L && (L.f1 || L.f2) && L.vary?.includes('d'));
+    return !!(L && (L.f1 || L.f2) && L.vary?.includes('d')) && !ridePin(rows, ri); // (an image riding with it: it slides, image and all)
   };
 
   /** Tilt surface s by `by` degrees (CCW) about its pivot (its hit point by default, else its pivot's centre of curvature
@@ -196,6 +222,14 @@
     const R = structuredClone(rows);
     const r = R[s + 1];
     r.tilt += by;
+    if (ridePin(R, s + 1)) {
+      // a riding image swings round with the optic, about its pivot (the same turn tilt makes), and the lock solves the
+      // shape from it (a paraboloid in a collimated beam keeps facing the beam: its tilt isn't the lock's to change)
+      if (!r.lock.vary?.includes('tilt')) r.tilt -= by;
+      const S0 = build(rows);
+      const O = S0[s].pivotAt ?? S0[s].P;
+      return carryRide(R, S0, s, p => add(O, rot(add(p, O, -1), by)));
+    }
     if (r.solve) delete r.solve.tilt;
     unvary(R, s + 1, 'tilt');
     return R;

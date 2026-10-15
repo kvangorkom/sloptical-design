@@ -1,4 +1,4 @@
-"""poppy_utils: export the design as a poppy_utils .toml optical system. (An Optic Sketch export extension.)
+"""poppy_utils: export the design as a poppy_utils .toml optical system. (A Sloptical Design export extension.)
 
 poppy_utils (https://github.com/kvangorkom/poppy_utils) builds a poppy optical system from a .toml file. This writes one
 for a monochromatic, unpolarized Fresnel model of the sketch, unfolded along its optical axis:
@@ -89,12 +89,12 @@ def run(ctx):
         return r or None
 
     out = [
-        "# Exported from Optic Sketch: a poppy_utils optical system (https://github.com/kvangorkom/poppy_utils).",
+        "# Exported from Sloptical Design: a poppy_utils optical system (https://github.com/kvangorkom/poppy_utils).",
         "# Monochromatic, unpolarized Fresnel model unfolded along the optical axis; lengths in mm.",
         "",
         "[metadata]",
         f"design = {q(ctx['name'])}",
-        f"notes = {q('Exported from Optic Sketch. Surface errors are default ABC-PSD values; stops without a set aperture follow the beam.')}",
+        f"notes = {q('Exported from Sloptical Design. Surface errors are default ABC-PSD values; stops without a set aperture follow the beam.')}",
         "",
         "[wavefront]",
         "optic_type = 'poppy.FresnelWavefront'",

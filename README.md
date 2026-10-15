@@ -1,4 +1,4 @@
-# Optic Sketch
+# Sloptical Design
 
 A browser sketchpad for quickly laying out optical systems: mirrors, lenses and off-axis conics, traced exactly in 3D,
 with spots, footprints and wavefronts at any plane. Designs export to Zemax, batoid and optiland, and to a vector PDF
@@ -19,7 +19,7 @@ Press **H** in the app for the keys and a short guide to every feature.
   in a native window, where Save writes straight back to the file on disk. The page can reach only the files you
   open or save there. To package it as a double-clickable app:
   ```sh
-  pyinstaller --windowed --name "Optic Sketch" --distpath app-dist --workpath app-build \
+  pyinstaller --windowed --name "Sloptical Design" --distpath app-dist --workpath app-build \
     --add-data "index.html:." --add-data "src:src" --add-data "extensions:extensions" optic_app.py
   ```
 - **Driven from Python:** `python3 optic_live.py serve design.json` opens the page watching the file, so any script

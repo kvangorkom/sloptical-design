@@ -125,7 +125,7 @@ function pdfWidth(s, size, font = '') {
 }
 
 /** Assemble a one-page PDF of w × h points from a pen's operators. Returns the file bytes. */
-function pdfDoc(w, h, pen, title = 'Optic Sketch figure') {
+function pdfDoc(w, h, pen, title = 'Sloptical Design figure') {
   const content = `1 0 0 -1 0 ${h} cm\n${pen.ops.join('\n')}`;
   const gs = [...pen.alphas]
     .map(a => `/A${Math.round(a * 100)} << /Type /ExtGState /ca ${a} /CA ${a} >>`)
@@ -137,7 +137,7 @@ function pdfDoc(w, h, pen, title = 'Optic Sketch figure') {
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>',
-    `<< /Title (${pdfStr(title)}) /Producer (Optic Sketch) /CreationDate (D:${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}Z) >>`,
+    `<< /Title (${pdfStr(title)}) /Producer (Sloptical Design) /CreationDate (D:${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}Z) >>`,
   ];
   let out = '%PDF-1.4\n%\xe2\xe3\xcf\xd3\n';
   const at = [];

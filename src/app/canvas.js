@@ -29,20 +29,16 @@ function pickFocus(mx, my) {
     [1, 2].forEach(n => {
       const tg = L?.[`f${n}`];
       const on = $('stig').checked || selected;
-      const p =
-        tg?.at === 'pt'
-          ? P3(tg.p)
-          : tg?.at === 'inf' && on
-            ? (F[n - 1] ?? infHandle(i))
-            : !tg && on
-              ? F[n - 1]
-              : null;
+      const real = !tg && on && F[n - 1] ? Optics.realImage(S, i, F[n - 1]) : null; // a free focus: where its light really converges
+      const at = pinAt(tg, ri);
+      const p = at ? at.p : tg?.at === 'inf' && on ? (F[n - 1] ?? infHandle(i)) : (real?.p ?? null);
+      const space = at ? at.space : real?.space;
       if (!p || (n === 2 && s.k === 0 && tg?.at !== 'pt')) return;
       const [x, y] = X(p);
       const d = Math.hypot(x - mx, y - my);
       if (d <= bd) {
         bd = d;
-        best = { ri, n, p };
+        best = { ri, n, p, ...(space > i && { space }) };
       }
     });
   });
@@ -72,11 +68,17 @@ function stickPlane(ri, F, tol, rows = sys.rows, St = S) {
  *  a focus solve) after a conic whose image is pinned to a point. Returns a pickFocus-style handle or null. */
 function planeFocus(i) {
   const q = S[i];
-  const r = sys.rows[i];
-  const L = r?.lock;
-  if (!q || !i || q.c || q.mirror || r.solve?.t?.type !== 'focus' || !L) return null;
-  const n = L.f2?.at === 'pt' ? 2 : L.f1?.at === 'pt' && L.f2?.at === 'inf' ? 1 : 0;
-  return n ? { ri: i, n, p: P3(L[`f${n}`].p) } : null;
+  if (!q || !i || q.c || q.mirror || sys.rows[i].solve?.t?.type !== 'focus') return null;
+  for (let ri = i; ri >= 1; ri--) {
+    const L = sys.rows[ri].lock;
+    for (const n of [2, 1]) {
+      const at = pinAt(L?.[`f${n}`], ri);
+      if (at && (Number.isInteger(at.space) ? at.space : ri - 1) + 1 === i)
+        return { ri, n, p: at.p, ...(at.space > ri - 1 && { space: at.space }) };
+    } // the image (held, or riding) this plane focuses on (after flats too)
+    if (S[ri - 1].c || !S[ri - 1].mirror) break; // (only flats between)
+  }
+  return null;
 }
 /** With Stigmatic on, a mirror whose two foci are both pinned to points (not infinity) varies R, k, off-axis and tilt: the
  *  stigmatic pair, solved outright (Optics.conjugateMirror); the off-axis becomes a normal angle. Returns whether it applies. */
@@ -122,7 +124,22 @@ function setFocus(h, w) {
       L.vary.forEach(k => delete r.solve?.[k]);
     }
   }
-  L[`f${n}`] = { at: 'pt', p: pt2(w) };
+  // a riding image is held while its square is dragged (flats on the way too), so it stays under the pointer; it rides
+  // again from where it is dropped (settleRide)
+  const rides =
+    !!L[`f${n}`]?.ride || L[`f${n}`]?.rideAfter || (fresh && $('stig').checked && stigMode() === 'follow');
+  L[`f${n}`] = {
+    at: 'pt',
+    p: pt2(w),
+    ...(h.space > ri - 1 && { space: h.space }),
+    ...(rides && { rideAfter: true }),
+  };
+  if ($('stig').checked && stigLocked(ri)) {
+    if (L.f1?.at !== 'inf' && L.f2?.at !== 'inf') Optics.offAxisAs(sys.rows, ri, 'angle');
+    L.vary = Optics.stigVary(sys.rows, ri); // the image held: all its shape varies
+    L.vary.forEach(k => delete r.solve?.[k]);
+    return;
+  }
   if (stigPair(ri)) return;
   if (fresh && !L.vary?.length) {
     const other = L[`f${3 - n}`];
@@ -245,7 +262,7 @@ cv.onpointermove = e => {
     }
     if (drag.focus) {
       const { ri, n } = drag.focus;
-      drag.stuck ||= (stickPlane(ri, drag.focus.p, 12 / view.s), true); // a plane dropped on the image follows it
+      drag.stuck ||= (stickPlane((drag.focus.space ?? ri - 1) + 1, drag.focus.p, 12 / view.s), true); // a plane dropped on the image follows it
       setFocus(
         drag.focus,
         world(e, drag.focus.p).map((v, k) => v - drag.grab[k]),
@@ -337,12 +354,13 @@ cv.onpointerup = e => {
     cv.style.cursor = '';
     return;
   }
-  if (drag?.focus && (drag.moved || !drag.plane)) {
-    if (drag.moved) commit();
+  if (drag?.focus && drag.moved) {
+    settleRide(drag.focus.ri);
+    commit();
     drag = null;
     cv.style.cursor = 'move';
     return;
-  } // (a click on a focal plane pins its popup)
+  } // (a click on a focus or a focal plane, without a drag, pins its popup like any click)
   if (drag?.shape !== undefined) {
     // finish a shape: one undo step; a click without a drag draws nothing
     const sh = sys.shapes[drag.shape];
@@ -386,11 +404,9 @@ cv.ondblclick = () => {
 
 // ── Quick insert: A adds a plane, M a mirror, where the cursor is on the optical axis (or past the last surface, along
 // its output). The gap there is split, so everything downstream stays put along the axis, and the new row's R cell takes
-// the focus, ready to type and Tab through. With Stigmatic on, a new mirror images perfectly: its F1 is pinned to the
-// incoming beam's focus and its F2 to a point (a square handle) at that same focus, so it starts as a sphere about it,
-// with R, k, off-axis (as a normal angle) and tilt varying; dragging the square places the image and the mirror becomes
-// the ellipsoid or hyperboloid that images one point on the other (Optics.conjugateMirror). In a collimated beam it is a
-// paraboloid facing the beam (tilt 0) whose focus is the square, varying R and off-axis.
+// the focus, ready to type and Tab through. With Stigmatic on, a new mirror is a flat; give it an R and Stigmatic locks it
+// to image perfectly (the incoming focus onto its image then, held or riding as Stigmatic's mode says), the ellipsoid,
+// hyperboloid or paraboloid that does so (Optics.conjugateMirror); dragging its square then places the image.
 let ptr = null; // last pointer position over the view
 /** The axis segment under screen point (mx, my): {j, s} = s along segment j (j = S.length: past the last surface), or null. */
 function axisAt(mx, my) {
@@ -414,38 +430,17 @@ function axisAt(mx, my) {
   const hw = best && best.j < S.length ? probeHW(best.j, best.s) * view.s : 0;
   return best && bd <= Math.max(10, hw + 6) ? best : null;
 }
-/** A new mirror's radius, conic and lock for segment j at s: see the section note. */
+/** A new mirror's radius and conic for segment j at s: see the section note. With Stigmatic on it starts flat (a fold),
+ *  and imaging perfectly is taken up once it has a radius (guard: Stigmatic locks it then); otherwise a mirror focusing
+ *  the beam a little way on. */
 function newMirror(j, s) {
   const a = sys.rows[0].ap;
-  const A = AX[j];
   const c = j ? Optics.curv(S, j - 1, a * 1e-4) : S.beam ? 1 / S.beam : 0;
-  const at = A.p.map((v, k) => v + s * A.u[k]);
   const far = !(Math.abs(1 / c) < 1e6 * a);
   const f = far ? Math.max(Math.abs(s), 10 * a) : s - 1 / c; // distance back to the focus
-  if (!$('stig').checked) return { R: -2 * f, k: 0, why: '' };
-  if (far) {
-    const F = at.map((v, k) => v - f * A.u[k]); // collimated: a paraboloid facing the beam, its focus on a point
-    return {
-      R: -2 * f,
-      k: -1,
-      d: 0,
-      lock: { f1: { at: 'pt', p: pt2(F) }, f2: { at: 'inf' }, vary: ['R', 'd', ...pose(sys.rows, F, true)] },
-      why: 'drag its F1 square to place the image',
-    };
-  }
-  const F = A.p.map((v, k) => v + A.u[k] / c); // the incoming focus: a sphere about it images it onto itself
-  return {
-    R: -f,
-    k: 0,
-    oa: 'angle',
-    d: 0,
-    lock: {
-      f1: { at: 'in' },
-      f2: { at: 'pt', p: pt2(F) },
-      vary: ['R', 'k', 'd', 'tilt', ...pose(sys.rows, F)],
-    },
-    why: 'drag its F2 square to place the image',
-  };
+  if ($('stig').checked)
+    return { R: 0, k: 0, why: 'a flat: give it an R to curve it (it then images perfectly)' };
+  return { R: -2 * f, k: 0, why: '' };
 }
 /** Stigmatic on: every curved mirror without focus locks gets them, keeping its image where it is now and making it perfect.
  *  F1 goes on the incoming focus and F2 on a point at the current image (or at infinity when the output is collimated),
@@ -458,31 +453,88 @@ function stigmatize() {
   });
   return n;
 }
-/** Lock row ri (a curved mirror without locks) to image perfectly onto the image it has in the built system St: F1 on the
- *  incoming focus, F2 on a point at that image (at infinity when the output there is collimated), varying R, k, off-axis
- *  and tilt; in a collimated beam, a paraboloid facing it whose focus is on that image. Returns whether it was locked. */
-function stigLock(ri, St, rows = sys.rows) {
+/** Stigmatic's mode: 'hold' (images stay where they are in the room; mirrors reshape) or 'follow' (mirrors keep their
+ *  shape and re-aim; images move with them). */
+const stigMode = () => $('stigMode').value;
+/** Whether row ri's lock is Stigmatic's own: a focus on the beam arriving (its focus, the source for the first optic, or,
+ *  collimated, the beam itself). */
+function stigLocked(ri, St = S) {
+  const L = sys.rows[ri]?.lock;
+  return (
+    !!L &&
+    [L.f1, L.f2].some(
+      t =>
+        t?.at === 'in' || (t?.at === 'src' && ri === 1) || (t?.at === 'inf' && !Optics.inFocus(St, ri - 1)),
+    )
+  );
+}
+/** Where pin tg of row ri's lock is in the room, with the space it is in, for its handle: a held point as it is, a riding
+ *  image where its light really converges (seen through flats on the way). Null for a pin that isn't a point. */
+function pinAt(tg, ri, St = S) {
+  if (tg?.at !== 'pt') return null;
+  if (!tg.ride) return { p: P3(tg.p), space: tg.space };
+  const Q = Optics.lockPoint(St, tg, ri - 1);
+  return Q && Optics.realImage(St, ri - 1, Q);
+}
+/** Lock row ri (a curved mirror without locks) to image perfectly, from the built system St: one focus on the incoming
+ *  focus (in a collimated beam, a paraboloid facing it), the other on its image (for a collimated output, its direction),
+ *  and its shape (R, k, off-axis, tilt) solved from those. Holding foci, the image is held in the room, where the light
+ *  really converges (seen through flats on the way, which are then held in the room too). Following, the image rides with
+ *  the mirror: it keeps its place relative to where the beam hits it, so moving or turning the mirror carries it along. A
+ *  plain plane at the image becomes its focal plane (a focus solve on its distance in). Returns whether it was locked. */
+function stigLock(ri, St, rows = sys.rows, mode = stigMode()) {
   const i = ri - 1;
   const r = rows[ri];
   if (r.type !== 'mirror' || !r.R || r.lock?.f1 || r.lock?.f2 || !St[i]) return false;
   const fin = Optics.inFocus(St, i);
   const img = Optics.inFocus(St, i + 1);
-  const pt = q => ({ at: 'pt', p: pt2(q) });
   if (!fin && !img) return false; // collimated in and out: nothing to image
+  const hold = mode !== 'follow';
+  const real = img && Optics.realImage(St, i, img);
+  const image = () =>
+    hold
+      ? { at: 'pt', p: pt2(real.p), ...(real.space > i && { space: real.space }) }
+      : { at: 'pt', ride: Optics.toRide(St, i, img) };
   if (fin && img) Optics.offAxisAs(rows, ri, 'angle'); // (a paraboloid keeps its off-axis distance)
-  const keys = !fin
-    ? ['R', 'd', ...pose(rows, img, true)]
-    : [...(img ? ['R', 'k', 'd', 'tilt'] : ['R', 'd', 'tilt']), ...pose(rows, img)];
-  keys.forEach(k => delete r.solve?.[k]); // one owner per value (no other lock varies a row's own R, k, d, tilt)
   if (!fin) {
     Object.assign(r, { k: -1, tilt: 0 });
     delete r.tiltY;
     delete r.pivot;
-    r.lock = { f1: pt(img), f2: { at: 'inf' }, vary: keys };
-  } else r.lock = { f1: { at: 'in' }, f2: img ? pt(img) : { at: 'inf' }, vary: keys };
-  if (!img && fin) r.k = -1;
-  if (img) stickPlane(ri, img, 1e-6 * Math.max(1, Math.hypot(...img)), rows, St); // a plane already at the image is its focal plane
+    r.lock = { f1: image(), f2: { at: 'inf' } };
+  } else {
+    if (!img) r.k = -1;
+    const out = hold
+      ? { u: [...St[i].uOut] }
+      : {
+          ride: Optics.toRide(
+            St,
+            i,
+            St[i].P.map((v, k) => v + St[i].uOut[k]),
+          ),
+        };
+    r.lock = { f1: { at: 'in' }, f2: img ? image() : { at: 'inf', ...out } };
+  }
+  r.lock.vary = Optics.stigVary(rows, ri);
+  r.lock.vary.forEach(k => delete r.solve?.[k]); // one owner per value
+  if (img) stickPlane(real.space + 1, real.p, 1e-6 * Math.max(1, Math.hypot(...real.p)), rows, St); // a plane already at the image is its focal plane
   return true;
+}
+/** A riding image whose square was dragged (held meanwhile) rides again, from where it was dropped. */
+function settleRide(ri) {
+  const L = sys.rows[ri]?.lock;
+  let n = 0;
+  for (const k of ['f1', 'f2'])
+    if (L?.[k]?.rideAfter) {
+      const Q = Optics.lockPoint(S, L[k], ri - 1); // (in the mirror's own space, seen through the held flats)
+      if (Q) L[k] = { at: 'pt', ride: Optics.toRide(S, ri - 1, Q) };
+      n++;
+    }
+  if (n) update();
+}
+/** Stigmatic's mode changed: its locks are made again in the new mode, each mirror keeping the image it has now. */
+function restigmatize() {
+  sys.rows.forEach((r, ri) => ri && stigLocked(ri) && delete r.lock);
+  return stigmatize();
 }
 function insertAt(mx, my, kind) {
   const hit = axisAt(mx, my);

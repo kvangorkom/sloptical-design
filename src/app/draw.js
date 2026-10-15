@@ -933,7 +933,9 @@ function axisFoci(g, M, o, s, i) {
       const tg = L?.[`f${n}`];
       const inf = tg?.at === 'inf' && !F[n - 1] && ($('stig').checked || sel);
       if (tg?.at !== 'pt' && !inf) return;
-      const [x, y] = M(inf ? infHandle(i) : P3(tg.p));
+      const at = !inf && pinAt(tg, i + 1);
+      if (!inf && !at) return;
+      const [x, y] = M(inf ? infHandle(i) : at.p);
       const h = 4.5; // a point target: a square handle to drag (dashed: at infinity, drag it in to make an image)
       g.line(
         [

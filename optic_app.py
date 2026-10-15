@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optic Sketch as a desktop app: the same index.html in a native window, with real access to your files.
+"""Sloptical Design as a desktop app: the same index.html in a native window, with real access to your files.
 
     pip install pywebview                  (once; on Linux also a GUI backend, e.g. pip install "pywebview[qt]")
     python3 optic_app.py [design.json ...]
@@ -36,7 +36,7 @@ ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))   # (a Py
 PORT = 47361              # a fixed local port keeps the page's storage (open designs, settings) the same from run to run
 STORAGE = Path.home() / ".optic_sketch"
 GRANTS_KEPT = 500         # files remembered as opened or saved here (the most recent)
-DESIGN_TYPES = ("Optic Sketch design (*.json)", "All files (*.*)")
+DESIGN_TYPES = ("Sloptical Design file (*.json)", "All files (*.*)")
 
 
 def _info(p, text=None):
@@ -219,7 +219,7 @@ def main(argv=None, start=None):
     debug = "--debug" in args
     api = Api([a for a in args if not a.startswith("--")])
     STORAGE.mkdir(exist_ok=True)
-    window = webview.create_window("Optic Sketch", str(page()), js_api=api, width=1440, height=920,
+    window = webview.create_window("Sloptical Design", str(page()), js_api=api, width=1440, height=920,
                                    min_size=(760, 480), text_select=True)
     api._window = window
     webview.start(start, http_server=True, http_port=_port(), private_mode=False, storage_path=str(STORAGE), debug=debug)

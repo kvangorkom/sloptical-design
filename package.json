@@ -1,5 +1,5 @@
 {
-  "name": "optic-sketch",
+  "name": "sloptical-design",
   "private": true,
   "description": "Browser sketchpad for optical layouts: an exact 3D conic ray tracer with a Canvas 2D interface",
   "scripts": {

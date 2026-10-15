@@ -1,14 +1,16 @@
-// help.js — help (H): keys and mouse, then one line per feature.
-function helpDialog() {
+// help.js — help: the keys and mouse (H, File ▸ Keyboard shortcuts), or the features guide (File ▸ Features guide), one line
+// per feature. One dialog, either view; a button switches to the other.
+function helpDialog(view = 'keys') {
   const d = $('helpDlg');
-  if (d.open) return d.close();
+  if (d.open && d.dataset.view === view) return d.close();
+  d.dataset.view = view;
   const K = mac ? '⌘' : 'Ctrl+';
   const S = mac ? '⇧' : 'Shift+';
   const A = mac ? '⌥' : 'Alt+';
   const keys = [
     ['H', 'this help'],
     ['A', 'add a plane where the cursor is on the beam'],
-    ['M', 'add a mirror there (Stigmatic: F1 on the incoming focus)'],
+    ['M', 'add a mirror there (Stigmatic: a flat; give it an R to curve it)'],
     ['drag an optic', 'move it: its parent slides, nothing upstream changes'],
     [`${S.replace('+', '')} drag`, 'move it along the axis only'],
     [`${A.replace('+', '')} drag`, 'tilt it about its pivot (3D views: turn it about the line of sight)'],
@@ -18,6 +20,7 @@ function helpDialog() {
     ['D', 'measure: drag between two points (they snap to optics and foci)'],
     [`${K},`, 'options'],
     ['drag a square', 'move a mirror’s image (Stigmatic)'],
+    ['S', 'Stigmatic: hold foci, or foci follow their mirrors'],
     ['drag empty space', 'pan'],
     ['wheel', 'zoom'],
     ['double-click', 'fit the view'],
@@ -35,10 +38,7 @@ function helpDialog() {
     [`${K}Z / ${K}${S}Z`, 'undo / redo'],
     [`${K}S / ${K}${S}S`, 'save / save as'],
     [`${K}O`, 'open'],
-    [
-      `${K}E`,
-      'export a figure (PDF; any range of surfaces, turned and flipped; drag a text in the preview to move it, double-click to edit it)',
-    ],
+    [`${K}E`, 'export a figure (PDF)'],
     ['Enter / Esc', 'table: commit / revert a value'],
     ['↑ ↓', 'table: nudge (Shift ×10)'],
     ['Tab', 'table: next value'],
@@ -59,7 +59,7 @@ function helpDialog() {
     ],
     [
       'Stigmatic',
-      'curved mirrors image perfectly: drag a mirror’s image (the square) and R, k, off-axis and tilt follow; the next mirror’s F1 follows that image. While it is on, an edit that would spoil a mirror’s perfect imaging is refused.',
+      'curved mirrors image perfectly: each keeps a focus on the beam coming in, and its image is where its other focus is. Beside it, choose what moving an optic does. Holds foci: images stay where they are in the room and mirrors reshape (R, k, off-axis, tilt) to keep them; flats between a mirror and its image stay put too, the beam sliding across them. Foci follow: each image moves with its mirror (it keeps its place relative to where the beam hits it), so moving or tilting a mirror carries its image and focal plane along, and a paraboloid in a collimated beam can slide across it; the shape adjusts as needed. Drag a square to move an image. An edit that would spoil perfect imaging is refused.',
     ],
     [
       '3D',
@@ -126,7 +126,7 @@ function helpDialog() {
     ['Live', 'File ▸ Watch file redraws whenever a script rewrites the system file.'],
     [
       'Import and export',
-      'Zemax .zmx in (y–z plane by default, as OpticStudio draws it, or x–z; optionally mirrored left–right or up–down) and out, batoid and optiland scripts, and vector PDF figures. File ▸ Copy link puts the whole design in a link that opens it in Optic Sketch.',
+      'Zemax .zmx in (y–z plane by default, as OpticStudio draws it, or x–z; optionally mirrored left–right or up–down) and out, batoid and optiland scripts, and vector PDF figures. File ▸ Copy link puts the whole design in a link that opens it in Sloptical Design.',
     ],
     [
       'Extensions',
@@ -134,10 +134,16 @@ function helpDialog() {
     ],
   ];
   const esc = t => t.replace(/[&<]/g, c => (c === '&' ? '&amp;' : '&lt;'));
-  $('helpKeys').innerHTML = keys.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  const keysView = view === 'keys';
+  $('helpH').textContent = keysView ? 'Keys and mouse' : 'Sloptical Design: features';
+  $('helpKeys').hidden = !keysView;
+  $('helpFeatBox').hidden = keysView;
+  $('helpOther').textContent = keysView ? 'Features guide' : 'Keys and mouse';
+  $('helpKeys').innerHTML = keys.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
   $('helpFeat').innerHTML = feats.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('');
-  d.showModal();
+  if (!d.open) d.showModal();
 }
+$('helpOther').onclick = () => helpDialog($('helpDlg').dataset.view === 'keys' ? 'guide' : 'keys');
 onDoc('keydown', e => {
   if (
     e.key.toLowerCase() !== 'h' ||

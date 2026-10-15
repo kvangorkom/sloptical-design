@@ -23,6 +23,8 @@
    *  paraxial curvature of the on-axis beam; R is solved as curvature so it can pass through flat. Returns the set of
    *  `${ri}${key}` with no solution (value left unchanged). Solves run one after another, so several can fight. */
   function applySolves(rows) {
+    unloop(rows);
+    rooms(rows);
     const a = rows[0].ap;
     const h = a * 1e-4;
     // Passes repeat until nothing changes, so each solve and lock sees the others' final values (e.g. a lock that moves R or
@@ -32,6 +34,7 @@
     for (let pass = 0; pass < 8 && before !== (before = JSON.stringify(rows)); pass++) {
       fails = new Set();
       rows.forEach((r, ri) => {
+        if (r.room && !placeFlat(rows, ri)) fails.add(ri + 'room'); // a flat held in the room: placed on the beam as it now runs
         for (const [k, sv] of Object.entries(r.solve ?? {})) {
           if (!solvesFor(rows, ri, k).includes(sv.type)) {
             delete r.solve[k];
@@ -60,6 +63,156 @@
     }
     if (before !== JSON.stringify(rows)) fails.add('fight'); // still changing after 8 passes: solves or locks fighting
     return fails;
+  }
+
+  // ── Images held in the room. A curved mirror that images perfectly has two real choices: where it sits on the beam,
+  // and where it images (a point, or a direction when the output is collimated). Its shape (R, k, off-axis, tilt) follows
+  // from those. An image is either held (a lock pins that focus to a point: the mirror reshapes to keep it) or free (only
+  // the focus on the incoming beam is pinned and the shape is kept: the mirror re-aims, and the image goes where it goes).
+  // A held point is kept where the light really converges, after any flats on the way ({at: 'pt', p, space: j}: in the
+  // space after surface j); those flats are then held in the room too (row.room), so the beam's hit point slides across
+  // them as the mirror re-aims, and the mirror's target is simply the point seen in them.
+
+  /** Pins to a row downstream go round in a loop (where that row is depends on this one), leaving the shape free to drift
+   *  (unless the lock varies the distance out, which brings that row to the focus instead):
+   *  each becomes a point held where it is now, and a plain plane there gets a focus solve on its distance in, so it stays
+   *  on the image. Mutates rows. */
+  function unloop(rows) {
+    let S = null;
+    rows.forEach((r, ri) => {
+      for (const k of ['f1', 'f2']) {
+        const t = r.lock?.[k];
+        if (!t || !Number.isInteger(t.at) || t.at <= ri || !rows[t.at] || r.lock.vary?.includes('t'))
+          continue; // (varying its distance out brings the row to the focus: no loop)
+        S ??= build(rows);
+        const Q = lockPoint(S, t);
+        if (!Q) {
+          delete r.lock[k];
+          continue;
+        }
+        const flat2 = Math.abs(Q[0]) <= 1e-12 * (1 + Math.hypot(...Q));
+        r.lock[k] = { at: 'pt', p: flat2 ? [Q[1], Q[2]] : Q, space: t.at - 2 };
+        const pr = rows[t.at - 1];
+        const tr = rows[t.at];
+        if (!t.f && tr.type !== 'mirror' && !tr.R && !pr.solve?.t && !varies(rows, t.at - 1, 't'))
+          (pr.solve ??= {}).t = { type: 'focus' };
+      }
+    });
+  }
+
+  /** The flats each held point is seen through are held in the room (row.room: a plane {p, n} and the distance in and tilt
+   *  it last gave); others aren't. A held flat whose distance in or tilt was edited is held where the edit put it. */
+  function rooms(rows) {
+    const want = new Set();
+    rows.forEach((r, ri) => {
+      for (const k of ['f1', 'f2']) {
+        const t = r.lock?.[k];
+        if (t?.at === 'pt' && Number.isInteger(t.space))
+          for (let rj = ri + 1; rj <= t.space + 1 && rj < rows.length; rj++)
+            if (rows[rj].type === 'mirror' && !rows[rj].R) want.add(rj);
+      }
+    });
+    let S = null;
+    rows.forEach((r, ri) => {
+      if (!want.has(ri)) return void delete r.room;
+      const A = r.room;
+      if (A && rows[ri - 1].t === A.t && (r.tilt ?? 0) === A.tilt && (r.tiltY ?? 0) === A.tiltY) return;
+      S ??= build(rows);
+      const q = S[ri - 1];
+      delete r.pivot;
+      if (rows[ri - 1].solve) delete rows[ri - 1].solve.t;
+      unvary(rows, ri - 1, 't');
+      unvary(rows, ri, 'tilt');
+      r.room = { p: [...q.P], n: [...q.ez], t: rows[ri - 1].t, tilt: r.tilt ?? 0, tiltY: r.tiltY ?? 0 };
+    });
+  }
+
+  /** Place held flat rows[ri] on the beam as it now arrives: its distance in where the beam meets its room plane, and its
+   *  tilt so its normal is the room plane's. False if the beam can't reach the plane. */
+  function placeFlat(rows, ri) {
+    const r = rows[ri];
+    const A = r.room;
+    let S = build(rows);
+    const u = ri > 1 ? S[ri - 2].uOut : [0, 0, 1];
+    const O = ri > 1 ? S[ri - 2].P : [0, 0, 0];
+    const un = dot(u, A.n);
+    const t = Math.abs(un) > 1e-9 ? dot(add(A.p, O, -1), A.n) / un : NaN;
+    if (!(t > 0)) return false;
+    rows[ri - 1].t = t;
+    S = build(rows);
+    const q = S[ri - 1];
+    const n = dot(A.n, q.ez) < 0 ? A.n.map(v => -v) : A.n;
+    if (is3D(rows)) {
+      const e = add(q.ey, n, -dot(q.ey, n));
+      const m = Math.hypot(...e);
+      const ey = m > 1e-12 ? e.map(v => v / m) : unit(cross(n, q.exIn));
+      const F = [cross(ey, n), ey, n];
+      const [tl, ty, cl] = euler(
+        [q.exIn, q.eyIn, q.uIn].map(f => F.map(g => dot(f, g))),
+        [r.tilt ?? 0, r.tiltY || 0, r.clock || 0],
+      );
+      r.tilt = tl;
+      if (ty || r.tiltY) r.tiltY = ty;
+      if (cl || r.clock) r.clock = cl;
+    } else {
+      const cur = r.tilt ?? 0;
+      r.tilt = cur + ((((angle(n) - angle(u) - cur) % 360) + 540) % 360) - 180;
+    }
+    Object.assign(A, { t: rows[ri - 1].t, tilt: r.tilt ?? 0, tiltY: r.tiltY ?? 0 });
+    return true;
+  }
+
+  /** The values a perfectly imaging mirror's lock varies so its pins fix them exactly (no direction left free to drift).
+   *  Image held (a point, or a direction for a collimated output): R, k, off-axis and tilt (3D: tilt y, clock), all its
+   *  shape; in a collimated beam a paraboloid facing it (k −1, tilt 0 kept), R and off-axis. Image free: its pose only, so
+   *  it re-aims to keep the incoming focus and keeps its shape; in a collimated beam just its tilt (it may slide across). */
+  function stigVary(rows, ri) {
+    const L = rows[ri].lock ?? {};
+    const three = is3D(rows);
+    const collIn = !inFocus(build(rows), ri - 1);
+    const held = [L.f1, L.f2].some(t => t && (t.at === 'pt' || (t.at === 'inf' && (t.u || t.ride))));
+    if (held)
+      return collIn
+        ? ['R', 'd', ...(three ? ['clock'] : [])]
+        : ['R', 'k', 'd', 'tilt', ...(three ? ['tiltY', 'clock'] : [])];
+    return collIn ? ['tilt', ...(three ? ['tiltY'] : [])] : ['d', 'tilt', ...(three ? ['tiltY'] : [])];
+  }
+
+  /** A riding image ({at: 'pt' | 'inf', ride: [a, b, c]}): it keeps its place relative to the mirror, a·(the beam's
+   *  incoming direction) + b·(its y) + c·(its x) from where the beam hits it (for 'inf', that direction). So it moves with
+   *  the mirror wherever the beam takes it, and a drag or turn of the mirror carries it along (moveOptic, turnOptic). */
+  const rideFrame = s => [s.uIn, s.eyIn, s.exIn];
+  function fromRide(S, i, r) {
+    const s = S[i];
+    const [u, y, x] = rideFrame(s);
+    return add(add(add(s.P, u, r[0]), y, r[1]), x, r[2] ?? 0);
+  }
+  /** World point Q (in mirror i's own space) as riding offsets. */
+  function toRide(S, i, Q) {
+    const s = S[i];
+    const q = add(Q, s.P, -1);
+    const [u, y, x] = rideFrame(s);
+    const r = [dot(q, u), dot(q, y), dot(q, x)];
+    return Math.abs(r[2]) > 1e-12 * (1 + Math.hypot(...r)) ? r : [r[0], r[1]];
+  }
+
+  /** Where the image F of curved mirror i (a point in its own space) really is: seen in the flats the light meets before it
+   *  converges there. Returns {p, space} (space: the surface after which it lies; i when no flat comes first, or the image
+   *  is virtual). */
+  function realImage(S, i, F) {
+    const s = S[i];
+    let Q = F;
+    let space = i;
+    const L = Math.hypot(...add(F, s.P, -1));
+    if (dot(add(F, s.P, -1), s.uOut) > 0)
+      for (let j = i + 1, run = 0; j < S.length; j++) {
+        const m = S[j];
+        run += Math.hypot(...add(m.P, S[j - 1].P, -1));
+        if (!(m.mirror && !m.c) || run >= L) break;
+        Q = unfold(S, Q, [m]);
+        space = j;
+      }
+    return { p: Q, space };
   }
 
   // Focus locks: row.lock = { f1, f2, vary }. f1/f2 pin that focus of the row's parent conic (see foci) to a target point:
@@ -98,7 +251,12 @@
     if (!tg || tg.at === 'inf') return null;
     let Q;
     let j; // the point, and the surface whose space it is in (−1: object space)
-    if (tg.at === 'pt') return tg.p.length === 3 ? [...tg.p] : [0, tg.p[0], tg.p[1]];
+    if (tg.at === 'pt' && tg.ride) return i === undefined ? null : fromRide(S, i, tg.ride); // riding with the mirror
+    if (tg.at === 'pt') {
+      Q = tg.p.length === 3 ? [...tg.p] : [0, tg.p[0], tg.p[1]];
+      if (!Number.isInteger(tg.space) || i === undefined || tg.space <= i) return Q; // in the surface's own space
+      return unfold(S, Q, S.slice(i + 1, tg.space + 1).reverse());
+    } // a point held where the light really converges: after the flats between, so it's seen through them
     if (tg.at === 'in') {
       if (i === undefined) return null;
       return inFocus(S, i);
@@ -119,12 +277,15 @@
     }
     if (i === undefined || j === i) return Q;
     const between = j < i ? S.slice(j + 1, i) : S.slice(i + 1, j).reverse(); // in the order light (or its reverse) meets them
-    for (const m of between)
+    return unfold(S, Q, between);
+  }
+  /** Point Q reflected in each flat mirror of `flats` in turn (a flat held in the room by its room plane). */
+  function unfold(S, Q, flats) {
+    for (const m of flats)
       if (m.mirror && !m.c) {
-        const n = m.ez;
-        const w = dot(add(Q, m.V, -1), n);
-        Q = add(Q, n, -2 * w);
-      } // reflect in the flat
+        const [V, n] = m.room ? [m.room.p, m.room.n] : [m.V, m.ez];
+        Q = add(Q, n, -2 * dot(add(Q, V, -1), n));
+      }
     return Q;
   }
 
@@ -139,8 +300,20 @@
     for (const n of [1, 2]) {
       if (!L[`f${n}`]) continue;
       if (L[`f${n}`].at === 'inf') {
+        // a paraboloid (k = −1) whose axis lies along the collimated beam: the one arriving (then it is the object at
+        // infinity), or a direction held for the beam leaving (u, in the surface's own space). A paraboloid at an angle to
+        // a collimated beam doesn't image it to a point, so the axis is part of the condition, not just k.
         const s = S[ri - 1];
-        r.push(s.c ? (s.k + 1) / Math.abs(s.c) : NaN);
+        const sc = s.c ? 1 / Math.abs(s.c) : NaN;
+        r.push(s.c ? (s.k + 1) * sc : NaN);
+        const tg = L[`f${n}`];
+        const u = tg.ride
+          ? add(fromRide(S, ri - 1, tg.ride), s.P, -1)
+          : (tg.u ?? (inFocus(S, ri - 1) ? null : ri > 1 ? S[ri - 2].uOut : [0, 0, 1]));
+        if (u) {
+          const x = cross(s.ez, u.length === 3 ? u : [0, ...u]);
+          r.push(...(three ? x : [x[0]]).map(v => v * sc));
+        }
         continue;
       }
       const Q = lockPoint(S, L[`f${n}`], ri - 1);
@@ -386,6 +559,14 @@
     conjugateMirror,
     dot2,
     varyPick,
+    unloop,
+    rooms,
+    placeFlat,
+    stigVary,
+    realImage,
+    unfold,
+    fromRide,
+    toRide,
   });
   if (typeof module === 'object') module.exports = Optics;
 })(typeof module === 'object' ? require('./analysis.js') : globalThis.Optics);

@@ -15,7 +15,7 @@
    *  number of mirrors, light travels −z, so those frames are flipped (z → −z, y → −y), their curvatures change sign and
    *  thicknesses come out negative; a 45° fold exports as the usual CB, mirror, CB, negative thickness. OpticStudio tilts
    *  are right-handed about +x, which in this tool's y-up, z-right view is clockwise: tilt x = −(CCW turn). */
-  function zemax(rows, { fields = [0], lambda = 0.55, lambdas, name = 'Optic Sketch' } = {}) {
+  function zemax(rows, { fields = [0], lambda = 0.55, lambdas, name = 'Sloptical Design' } = {}) {
     const waves = lambdas?.length > 1 ? lambdas : [lambda]; // the primary first
     const S = build(rows);
     const E = v => (+v).toExponential(15);

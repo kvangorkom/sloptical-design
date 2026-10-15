@@ -40,6 +40,12 @@
         if (v === null) delete row.lock[k];
         else t.at = v;
       }
+      if (t && t.space !== undefined) {
+        // a held point's space (after surface `space`): by its row, like a target
+        const v = f(Number.isInteger(t.space) ? t.space + 1 : t.space);
+        if (v === null) delete t.space;
+        else t.space = Number.isInteger(v) ? v - 1 : v;
+      }
     }
     if (row.pivot && row.pivot.at !== undefined && row.pivot.at !== 'coc') {
       const v = f(row.pivot.at);

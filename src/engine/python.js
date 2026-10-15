@@ -11,7 +11,7 @@
    *  after. The last surface is the image (a batoid Detector when it is a plain plane). Rays start on the pupil plane z = 0:
    *  collimated at the field angles (degrees), or from/to the source point (0, h, R) when the beam comes from a focus.
    *  Run as a script, each prints the spot of every field on the last surface. */
-  function toPython(rows, lib, { fields = [0], lambda = 0.55, name = 'Optic Sketch' } = {}) {
+  function toPython(rows, lib, { fields = [0], lambda = 0.55, name = 'Sloptical Design' } = {}) {
     const S = build(rows);
     const py = v => {
       if (!isFinite(v)) throw Error('the layout has a surface the axis ray misses; fix it before exporting');
@@ -46,7 +46,7 @@
       lib === 'batoid'
         ? 'batoid (https://github.com/jmeyers314/batoid; tested with 0.9)'
         : 'optiland (https://github.com/HarrisonKramer/optiland; tested with 0.6)';
-    const head = `"""${name}: exported from Optic Sketch for ${doc}.
+    const head = `"""${name}: exported from Sloptical Design for ${doc}.
 
 Units: mm. The entrance pupil is the plane z = 0 at the origin, semi-diameter A; the optical axis starts along +z and y is up.
 ${

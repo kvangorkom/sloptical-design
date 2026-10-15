@@ -93,7 +93,7 @@ function renderLock() {
     ...(S.beam ? [['src', 'Beam source (focus)']] : []),
     ['0', 'Pupil centre'],
     ...S.flatMap((q, j) =>
-      j === ri - 1
+      j >= ri - 1 // (only upstream: a row downstream moves with this one, so a pin there goes round in a loop)
         ? []
         : [
             [`${j + 1}`, `${label(j)} · hit point`],
@@ -146,16 +146,23 @@ $('lock').onchange = e => {
   const L = (r.lock ??= { vary: [] });
   if (!v) delete L['f' + n];
   else if (v === 'pt') {
-    const s = S[lk.ri - 1];
-    const f = Optics.foci(s)[n - 1] ?? s.P.map((x, k) => x + s.uOut[k] * Math.abs(1 / (s.c || 1e-3)));
-    L['f' + n] = { at: 'pt', p: [f[1], f[2]] };
-  } // where that focus is now (at infinity: out along the beam)
+    const i = lk.ri - 1;
+    const s = S[i];
+    const f = Optics.foci(s)[n - 1];
+    const q = f
+      ? Optics.realImage(S, i, f)
+      : { p: s.P.map((x, k) => x + s.uOut[k] * Math.abs(1 / (s.c || 1e-3))), space: i };
+    L['f' + n] = { at: 'pt', p: pt2(q.p), ...(q.space > i && { space: q.space }) };
+  } // where that focus is now, held where its light converges (at infinity: out along the beam)
   else if (v === 'in' || v === 'inf' || v === 'src') L['f' + n] = { at: v };
   else {
     const [a, f] = v.split(':');
     L['f' + n] = { at: +a, ...(f && { f: +f }) };
   }
-  if (!stigPair(lk.ri)) {
+  if ($('stig').checked && stigLocked(lk.ri)) {
+    L.vary = Optics.stigVary(sys.rows, lk.ri); // Stigmatic: held image, all the shape; free image, the pose
+    L.vary.forEach(k => delete r.solve?.[k]);
+  } else if (!stigPair(lk.ri)) {
     const { keep } = Optics.varyPick(sys.rows, lk.ri, [...(L.vary ?? [])].reverse());
     L.vary = (L.vary ?? []).filter(k => keep.includes(k));
   }

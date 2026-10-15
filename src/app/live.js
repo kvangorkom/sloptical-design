@@ -20,7 +20,7 @@ async function poll() {
     }
     if (txt !== live.txt) {
       const o = JSON.parse(txt);
-      if (!o?.rows?.length) throw Error('not an Optic Sketch system');
+      if (!o?.rows?.length) throw Error('not a Sloptical Design system');
       const d = docs.find(x => x.id === live.doc);
       if (!d) return watch(false);
       if (d === doc) {

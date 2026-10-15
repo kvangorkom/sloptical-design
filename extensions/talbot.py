@@ -1,4 +1,4 @@
-"""Talbot: how far the beam here has propagated, in Talbot lengths, from a chosen optic. (An Optic Sketch extension.)
+"""Talbot: how far the beam here has propagated, in Talbot lengths, from a chosen optic. (A Sloptical Design extension.)
 
 A ripple of period p on an optic (polishing error, a deformable mirror's actuator print, a grating) self-images every
 Talbot length z_T = 2 p^2 / lambda as the beam propagates: phase ripples turn into intensity ripples at z_T/4 and back
