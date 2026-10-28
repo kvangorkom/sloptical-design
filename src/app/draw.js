@@ -203,11 +203,30 @@ function ballRim(s, look) {
     return C.map((v, m) => v + r * (Math.cos(t) * a[m] + Math.sin(t) * b[m]));
   });
 }
-const ballStyle = (o, hot) => ({
-  color: o.blank ?? o.glass,
-  stroke: hot ? o.accent : (o.blankLine ?? o.ink),
+const ballStyle = (o, hot, s = {}) => ({
+  color: roleFill(s, o.blank ?? o.glass),
+  stroke: hot ? o.accent : roleLine(s, o.blankLine ?? o.ink),
   width: hot ? 1.5 * o.lw.optic : o.lw.optic,
 });
+/** A surface's (or shape's) own colour, its row's `color` (e.g. a role in a sequence of figures: the optic being aligned,
+ *  test equipment): its lines in that colour, its fills a pale tint of it. Without one, the pen's. */
+const roleLine = (s, base) => s?.color || base;
+function roleFill(s, base) {
+  const c = s?.color;
+  if (!c) return base;
+  const h = c.replace('#', '');
+  const v = (h.length === 3 ? [...h].map(x => x + x) : h.match(/../g)).slice(0, 3).map(x => parseInt(x, 16));
+  return (
+    '#' +
+    v
+      .map(x =>
+        Math.round(x + (255 - x) * 0.72)
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
+}
 /** A double pass's way back (TB): dashed, in each field's colour; as cones, just the fan's edge rays (the cones already
  *  show where the light goes, and coming straight back it overlies them). */
 function drawReturn(g, M, o) {
@@ -288,18 +307,18 @@ function render(g, M, o) {
   else {
     S.forEach((s, i) => {
       if (!s.mirror && s.nOut > 1 && S[i + 1] && inR(i) && inR(i + 1))
-        g.fill([[...pf(s), ...pf(S[i + 1]).toReversed()].map(M)], { color: o.glass });
+        g.fill([[...pf(s), ...pf(S[i + 1]).toReversed()].map(M)], { color: roleFill(s, o.glass) });
     });
     S.forEach((s, i) => {
       if (!s.mirror || !inR(i)) return;
-      if (s.ball) return void g.fill([ballRim(s).map(M)], ballStyle(o, hot(i))); // a caliball: the whole sphere
+      if (s.ball) return void g.fill([ballRim(s).map(M)], ballStyle(o, hot(i), s)); // a caliball: the whole sphere
       if (o.blanks)
         g.fill([Optics.blank(s, s.y0, s.y1, (s.y1 - s.y0) / 6).map(M)], {
-          color: o.blank,
-          stroke: hot(i) ? o.accent : o.blankLine,
-          width: hot(i) ? 1.5 * o.lw.optic : o.lw.optic * 0.7,
+          color: roleFill(s, o.blank),
+          stroke: hot(i) ? o.accent : roleLine(s, o.blankLine),
+          width: hot(i) ? 1.5 * o.lw.optic : o.lw.optic * (s.color ? 1 : 0.7),
         });
-      else g.line(s.prof.map(M), { color: hot(i) ? o.accent : o.ink, width: 1.6 * o.lw.optic });
+      else g.line(s.prof.map(M), { color: hot(i) ? o.accent : roleLine(s, o.ink), width: 1.6 * o.lw.optic });
     });
     if (o.beam !== 'rays') {
       if (o.coneLayer) o.coneLayer();
@@ -327,17 +346,20 @@ function render(g, M, o) {
     if (o.axes) axisFoci(g, M, o, s, i);
     if (!s.mirror && !o.d3)
       g.line(pf(s).map(M), {
-        color: hot(i) ? o.accent : o.glassLine,
+        color: hot(i) ? o.accent : roleLine(s, o.glassLine),
         width: s.para ? 1.4 * o.lw.optic : o.lw.optic,
         dash: s.n === s.nIn && !s.c && !s.para ? [5 * o.lw.optic, 3 * o.lw.optic] : [],
       });
     if (s.para && !o.d3)
-      lensArrows(g, pf(s).map(M), s.f, { color: hot(i) ? o.accent : o.glassLine, width: 1.4 * o.lw.optic });
+      lensArrows(g, pf(s).map(M), s.f, {
+        color: hot(i) ? o.accent : roleLine(s, o.glassLine),
+        width: 1.4 * o.lw.optic,
+      });
     if (o.labels && LP?.[i]?.name) {
       const L = LP[i].name;
       g.text(L.t, [L.x, L.y], {
         size: L.fs,
-        color: hot(i) ? o.accent : o.mute,
+        color: hot(i) ? o.accent : roleLine(s, o.mute),
         font: o.font,
         align: 'center',
         lead: L, // (a pen that moves texts draws the arrow, from where the text ends up)
@@ -505,14 +527,14 @@ function solids3(g, M, o, D) {
   S.forEach((s, i) => {
     if (!D.inR(i) || done.has(i)) return;
     if (s.ball)
-      return items.push([dep(ballC(s)), () => g.fill([ballRim(s, true).map(M)], ballStyle(o, hot(i)))]);
+      return items.push([dep(ballC(s)), () => g.fill([ballRim(s, true).map(M)], ballStyle(o, hot(i), s))]);
     if (s.mirror) {
       const B = Optics.blankSolid(s, s.y0, s.y1, (s.y1 - s.y0) / 6, s.w3);
       const n = unit(s.seg ? s.ey.map((v, k) => v * s.nb[1] + s.ez[k] * s.nb[2]) : s.ez); // the back's normal, outward
       return items.push([
         dep(s.P),
         () => {
-          if (!o.blanks || !B.section.length) return void g.line(ring(B.front), soft(i, o.ink));
+          if (!o.blanks || !B.section.length) return void g.line(ring(B.front), soft(i, roleLine(s, o.ink)));
           return cylinder(
             i,
             B.front,
@@ -520,8 +542,8 @@ function solids3(g, M, o, D) {
             B.section,
             dished(s, n) ? [s.sl] : [],
             n,
-            o.blank,
-            o.blankLine,
+            roleFill(s, o.blank),
+            roleLine(s, o.blankLine),
             [Optics.dot(n, b) > 0 ? B.back : B.front],
           );
         },
@@ -543,8 +565,8 @@ function solids3(g, M, o, D) {
             [...s.sl, ...n.sl.toReversed()],
             [...(dished(s, ax) ? [s.sl] : []), ...(dished(n, back) ? [n.sl] : [])],
             ax,
-            o.glass,
-            o.glassLine,
+            roleFill(s, o.glass),
+            roleLine(s, o.glassLine),
             [rim3(s), rim3(n)],
           ),
       ]);
@@ -553,9 +575,10 @@ function solids3(g, M, o, D) {
     items.push([
       dep(s.P),
       () => {
-        g.line(ring(rim3(s)).map(M), { ...soft(i, o.glassLine), dash: d });
-        g.line(s.sl.map(M), { ...soft(i, o.glassLine), dash: d });
-        if (s.para) lensArrows(g, s.sl.map(M), s.f, { ...soft(i, o.glassLine), width: 1.4 * lw }); // an ideal lens
+        g.line(ring(rim3(s)).map(M), { ...soft(i, roleLine(s, o.glassLine)), dash: d });
+        g.line(s.sl.map(M), { ...soft(i, roleLine(s, o.glassLine)), dash: d });
+        if (s.para)
+          lensArrows(g, s.sl.map(M), s.f, { ...soft(i, roleLine(s, o.glassLine)), width: 1.4 * lw }); // an ideal lens
       },
     ]);
   });

@@ -120,7 +120,7 @@ function figure(o) {
       : []),
     ...(o.axes ? Sr.flatMap(s => (s.c && (s.d || s.k < 0) ? Optics.foci(s).filter(Boolean) : [])) : []),
   ];
-  const P = [
+  const P = extentCorners() ?? [
     ...extent(),
     ...gh.flatMap(L =>
       withLayout(L, () => {
@@ -215,7 +215,8 @@ function figure(o) {
   };
   let pad = [0, 0, 0, 0];
   let f = lay(pad);
-  for (let it = 0; it < 6; it++) {
+  for (let it = 0; it < 6 && !extentCorners(); it++) {
+    // (a fixed extent keeps its scale: text past it isn't made room for)
     const bx = [];
     const meas = {
       line() {},
@@ -288,6 +289,21 @@ function arrowFrom(b, to, fs) {
     ) +
     0.25 * fs;
   return [[c[0] + e[0] * k, c[1] + e[1] * k], to];
+}
+/** The figure as a file, for scripts (e.g. a headless browser making one figure per configuration): the figure dialog's
+ *  options (fig) with `opts` over them, as 'pdf' (bytes, as base64 text) or 'svg' (text). Returns { data, W, H } (points). */
+function figureFile(opts = {}, kind = 'pdf') {
+  const o = { ...fig, edits: {}, moves: {}, ...opts };
+  o.fields = (o.fields ?? sys.fields.map((_, j) => j)).filter(j => j < sys.fields.length);
+  const f = figure(o);
+  const g = kind === 'svg' ? svgPen() : pdfPen();
+  drawFigure(textPen(g, o.edits, null, o.moves), f, o);
+  const title = opts.title ?? file.name.replace(/\.json$/, '');
+  if (kind === 'svg') return { data: svgDoc(f.W, f.H, g, title), W: f.W, H: f.H };
+  const b = pdfDoc(f.W, f.H, g, title);
+  let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return { data: btoa(s), W: f.W, H: f.H };
 }
 function drawFigure(g, f, o) {
   // the other configurations under the active one, over the shapes (whose fill would hide them)

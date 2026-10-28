@@ -80,9 +80,13 @@ function drawShapes(g0, M, o, collect) {
     if (Optics.isSolid(sh)) {
       // a 3D envelope: its silhouette, filled, then its edges and its name
       if (P.length < 3) continue;
-      g.fill([P], { color: o.shape, stroke: o.shapeLine, width: 0.7 * o.lw.optic });
+      g.fill([P], {
+        color: roleFill(sh, o.shape),
+        stroke: roleLine(sh, o.shapeLine),
+        width: 0.7 * o.lw.optic,
+      });
       for (const [a, b] of SH.wire(sh).edges)
-        g.line([M(a), M(b)], { color: o.shapeLine, width: 0.5 * o.lw.optic, alpha: 0.6 });
+        g.line([M(a), M(b)], { color: roleLine(sh, o.shapeLine), width: 0.5 * o.lw.optic, alpha: 0.6 });
       if (sh.name) {
         const xs = P.map(p => p[0]);
         const ys = P.map(p => p[1]);
@@ -118,7 +122,7 @@ function drawShapes(g0, M, o, collect) {
       );
       continue;
     }
-    g.fill([P], { color: o.shape, stroke: o.shapeLine, width: 0.7 * o.lw.optic });
+    g.fill([P], { color: roleFill(sh, o.shape), stroke: roleLine(sh, o.shapeLine), width: 0.7 * o.lw.optic });
     if (sh.type === 'rect' && !sh.a) {
       const [X0, X1, Y0, Y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
       lab(
