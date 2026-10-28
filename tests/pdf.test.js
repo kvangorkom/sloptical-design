@@ -62,3 +62,53 @@ test('text: WinAnsi encoding with escapes; widths from the font metrics', () => 
   assert.equal(pdfWidth('100 mm', 10, 'Helvetica'), ((3 * 556 + 278 + 2 * 833) * 10) / 1000);
   assert.equal(pdfWidth('100 mm', 10, 'Times'), ((3 * 500 + 250 + 2 * 778) * 10) / 1000);
 });
+
+test('the SVG pen draws what the PDF pen does: paths, translucency, dashes, escaped text', () => {
+  const { svgPen, svgDoc } = require('../src/app/pdf.js');
+  const g = svgPen();
+  g.line(
+    [
+      [0, 0],
+      [10, 5],
+    ],
+    { color: '#D55E00', width: 0.5, dash: [2, 1], alpha: 0.5 },
+  );
+  g.fill(
+    [
+      [
+        [0, 0],
+        [10, 0],
+        [5, 8],
+      ],
+    ],
+    { color: '#009E73', alpha: 0.3, stroke: '#000', width: 0.5 },
+  );
+  g.segs(
+    [
+      [
+        [0, 0],
+        [1, 1],
+      ],
+      [
+        [2, 2],
+        [3, 3],
+      ],
+    ],
+    { color: '#000', width: 0.2 },
+  );
+  g.text('OAP5 <PRI> & flat', [5, 5], { size: 6, color: '#333', align: 'center', font: 'Helvetica' });
+  const svg = svgDoc(100, 50, g, 'A & B');
+  assert.match(
+    svg,
+    /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" viewBox="0 0 100 50" width="100pt" height="50pt">/,
+  );
+  assert.match(
+    svg,
+    /<path d="M0 0L10 5" fill="none" stroke="#D55E00" stroke-width="0.5"[^>]*stroke-dasharray="2 1"[^>]*stroke-opacity="0.5"\/>/,
+  );
+  assert.match(svg, /<path d="M0 0L10 0L5 8Z" fill="#009E73" fill-opacity="0.3"\/>/);
+  assert.match(svg, /d="M0 0L1 1M2 2L3 3"/);
+  assert.match(svg, /text-anchor="middle">OAP5 &lt;PRI&gt; &amp; flat<\/text>/);
+  assert.match(svg, /<title>A &amp; B<\/title>/);
+  assert.equal((svg.match(/<path /g) || []).length, 4);
+});
