@@ -125,6 +125,37 @@ describe('Zemax: a double pass written out', () => {
     }
   });
 
+  test('a slightly 3D design (tilts of 1e-4°) with a caliball: the way back still re-imports as traced', () => {
+    // near a retro-reflection the frame carried past the mirror used to hang on round-off, so the import read the
+    // optics after it differently from the tracer
+    const rows = [
+      { R: 0, t: 138.37291967811, ap: 1.8671621766439 },
+      surf({ name: 'Plane', t: 93.779211556732, tiltY: -0.00016108697008183 }),
+      mirror({
+        name: 'OAP',
+        R: -400,
+        k: -1,
+        d: 70.545239066225,
+        tiltY: -0.00016108697002458,
+        clock: 0.012982311569901,
+        t: 200,
+      }),
+      mirror({ name: 'Ball', R: 6.35, dp: true, ball: true }),
+    ];
+    rows[2].solve = { t: { type: 'centre' } };
+    O.applySolves(rows);
+    const S = O.build(rows);
+    const B = O.build(O.fromZemax(O.zemax(rows), { plane: '3d' }).rows);
+    for (const [x, y] of [
+      [0, 0],
+      [1, 0.5],
+    ]) {
+      const a = O.traceDP(S, x, y, 0).at(-1);
+      const b = O.trace(B, x, y, 0).at(-1);
+      near(dist(a.p, b.p), 0, 1e-7, `ray (${x}, ${y})`);
+    }
+  });
+
   test('configurations with different ways back: each re-imported traces as its double pass', () => {
     const sys = withConfigs(
       [
