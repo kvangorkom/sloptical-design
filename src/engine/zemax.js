@@ -34,10 +34,12 @@
    *  axis (after a fold), tilt then thickness; otherwise (an OAP's parent vertex) thickness, then decenter y and tilt. Zemax's mirror convention is kept: after an odd
    *  number of mirrors, light travels −z, so those frames are flipped (z → −z, y → −y), their curvatures change sign and
    *  thicknesses come out negative; a 45° fold exports as the usual CB, mirror, CB, negative thickness. OpticStudio tilts
-   *  are right-handed about +x, which in this tool's y-up, z-right view is clockwise: tilt x = −(CCW turn). */
+   *  are right-handed about +x, which in this tool's y-up, z-right view is clockwise: tilt x = −(CCW turn). A double pass
+   *  is written by zemaxConfigs: the way back as surfaces of its own. */
   function zemax(rows, { fields = [0], lambda = 0.55, lambdas, name = 'Sloptical Design' } = {}) {
     const waves = lambdas?.length > 1 ? lambdas : [lambda]; // the primary first
     const S = build(rows);
+    if (S.dp) return zemaxConfigs([{ rows }], { fields, lambda, lambdas, name }).text; // the way back written out
     const E = v => (+v).toExponential(15);
     const out = [];
     const sf = [];
@@ -144,6 +146,255 @@
       ...sf.flatMap((l, i) => [`SURF ${i + 1}`, ...l.map(x => '  ' + x)]),
     );
     return out.join('\r\n') + '\r\n';
+  }
+
+  /** The sequence a design's light meets, as frames for a .zmx: the stop (the pupil), each surface, and in a double pass
+   *  (S.dp) the way back: the surfaces before the last mirror again, last first, met from the other side, then the pupil
+   *  plane where the light came in. Each: { key (the row's id, or its index; '<' marks the way back), V and frame X, Y, Z
+   *  (Z the surface's axis, signed so that, as OpticStudio expects, the light travels +Z before an even number of mirrors
+   *  and −Z after an odd one), lines (TYPE, COMM, CURV, CONI or PARM, GLAS) }. */
+  function zmxPath(rows) {
+    const S = build(rows);
+    const E = v => (+v).toExponential(15);
+    const key = i => (rows[i]?.id !== undefined ? String(rows[i].id) : 'r' + i);
+    const glass = (n, abbe) =>
+      n === 1
+        ? []
+        : [
+            abbe // a model glass: its n (taken as n_d) and Abbe number
+              ? `GLAS ___BLANK 1 0 ${E(n)} ${E(abbe)} 0 0 0 0 0 0`
+              : `GLAS ___BLANK 1 0 ${E(n)} 1.0E+6 0 0 0 0 0 0`,
+          ];
+    const els = [
+      { key: 'stop', V: [0, 0, 0], ez: [0, 0, 1], ey: [0, 1, 0], u: [0, 0, 1], plain: ['STOP', 'CURV 0'] },
+    ];
+    const ax = trace(S, 0, 0, 0);
+    S.forEach((s, i) =>
+      els.push({
+        key: key(i + 1),
+        s,
+        u: s.uIn,
+        n: s.mirror ? 1 : s.nOut,
+        abbe: rows[i + 1].abbe,
+        name: s.name || 'S' + (i + 1),
+      }),
+    );
+    if (S.dp && ax.length === S.length) {
+      const back = Optics.traceBack(S, ax.at(-1));
+      let u = S.at(-1).uOut;
+      for (let i = S.length - 2, k = 0; i >= 0 && k < back.length; i--, k++) {
+        const s = S[i];
+        els.push({
+          key: key(i + 1) + '<',
+          s,
+          u,
+          n: s.mirror ? 1 : s.nIn,
+          abbe: s.mirror ? 0 : i ? rows[i].abbe || 0 : 0,
+          name: (s.name || 'S' + (i + 1)) + ' (back)',
+        });
+        u = back[k].u;
+      }
+      if (back.length === S.length)
+        els.push({
+          key: 'stop<',
+          V: [0, 0, 0],
+          ez: [0, 0, 1],
+          ey: [0, 1, 0],
+          u,
+          plain: ['COMM Pupil_(back)', 'CURV 0'],
+        });
+    }
+    let σ = 1;
+    return els.map(e => {
+      const s = e.s;
+      const ez = s ? s.ez : e.ez;
+      const g = σ * (dot(e.u, ez) < 0 ? -1 : 1);
+      if (s?.mirror) σ = -σ;
+      const X = s ? (s.ex ?? [1, 0, 0]) : [1, 0, 0];
+      const out = {
+        key: e.key,
+        V: s ? s.V : e.V,
+        X,
+        Y: (s ? s.ey : e.ey).map(v => g * v),
+        Z: ez.map(v => g * v),
+      };
+      if (!s) return { ...out, type: 'STANDARD', lines: e.plain };
+      out.type = s.para ? 'PARAXIAL' : 'STANDARD';
+      out.lines = [
+        `COMM ${e.name.replace(/\s+/g, '_')}`,
+        `CURV ${E(g * s.c)}`,
+        ...(s.para ? [`PARM 1 ${E(s.f)}`, 'PARM 2 1'] : [`CONI ${E(s.k)}`]),
+        ...(s.mirror ? ['GLAS MIRROR 0 0 1.5 40 0 0 0 0 0 0'] : glass(e.n, e.abbe)),
+      ];
+      return out;
+    });
+  }
+
+  /** One .zmx holding several configurations of a design in OpticStudio's multi-configuration editor. designs: [{ name,
+   *  rows }], each a configuration's rows (as configRows gives them: rows shared between configurations carry the same
+   *  id). Every surface any of them meets is in the one lens table, in an order each configuration's own follows; each is
+   *  written as the surface then a coordinate break to the next one (decenter x, y, then tilt about x, y, z), and the
+   *  values that differ between configurations (thicknesses, the breaks, curvatures, conics, paraxial focal lengths,
+   *  comments) go in the editor (THIC, PRAM, CRVT, CONN, MCOM), as do the surfaces a configuration doesn't have (IGNM,
+   *  surface and break together). A double pass (the last row's dp) is written out: the way back as surfaces of its own,
+   *  ending on the pupil plane. Fields, wavelengths and the entrance pupil are the first configuration's (warned when they
+   *  differ); active (an index) is the one saved as current. Returns { text, warnings }. */
+  function zemaxConfigs(
+    designs,
+    { fields = [0], lambda = 0.55, lambdas, name = 'Sloptical Design', active = 0 } = {},
+  ) {
+    const waves = lambdas?.length > 1 ? lambdas : [lambda];
+    const E = v => (+v).toExponential(15);
+    const warnings = [];
+    const paths = designs.map(d => zmxPath(d.rows));
+    // one order for every configuration's surfaces: each configuration's own order is kept (a surface met out of the order
+    // so far gets an entry of its own)
+    const L = [];
+    paths.forEach((P, ci) => {
+      let at = -1;
+      for (const el of P) {
+        let k = L.indexOf(el.key);
+        if (k >= 0 && k <= at) {
+          el.key += `@${ci}`;
+          k = -1;
+        }
+        if (k < 0) {
+          L.splice(at + 1, 0, el.key);
+          k = at + 1;
+        }
+        at = k;
+      }
+    });
+    // per configuration, each surface's lines, thickness and break to the next surface it meets
+    const per = paths.map(P => {
+      const m = new Map();
+      P.forEach((A, i) => {
+        const N = P[i + 1] ?? A;
+        const q = add(N.V, A.V, -1);
+        const [t, y, k] = euler([A.X, A.Y, A.Z].map(a => [N.X, N.Y, N.Z].map(b => dot(a, b))));
+        m.set(A.key, {
+          type: A.type,
+          lines: A.lines,
+          disz: dot(q, A.Z),
+          cb: [dot(q, A.X), dot(q, A.Y), -t, y, k].map(v => (Math.abs(v) < 1e-12 ? 0 : v)),
+        });
+      });
+      return m;
+    });
+    const nC = designs.length;
+    const first = j => (per[active]?.has(L[j]) ? active : per.findIndex(m => m.has(L[j])));
+    const ops = [];
+    const op = (code, surf, ci, value, int2 = 0) =>
+      ops.push(`${code} ${surf} ${ci + 1} ${value} 0 ${int2} 0 1 1 1 0 0 "" 0`);
+    const sf = [];
+    const val = (lines, k) => lines.find(l => l.startsWith(k + ' '))?.slice(k.length + 1);
+    L.forEach((key, j) => {
+      const base = per[first(j)].get(key);
+      const sEl = 2 * j + 1; // the surface; its break follows
+      sf.push([`TYPE ${base.type}`, ...base.lines, `DISZ ${E(base.disz)}`]);
+      sf.push(['TYPE COORDBRK', ...base.cb.map((v, p) => `PARM ${p + 1} ${E(v)}`), 'PARM 6 0', 'DISZ 0']);
+      const have = per.map(m => m.get(key));
+      if (nC < 2) return;
+      if (have.some(h => !h))
+        for (let ci = 0; ci < nC; ci++) op('IGNM', sEl, ci, have[ci] ? '0' : '1', sEl + 1);
+      const each = f => per.map((m, ci) => f(have[ci] ?? base));
+      const same = (a, b) =>
+        a === b ||
+        (isFinite(+a) &&
+          isFinite(+b) &&
+          a !== '' &&
+          b !== '' &&
+          Math.abs(+a - +b) <= 1e-10 * (1 + Math.abs(+a)));
+      const differ = vs => vs.some((v, ci) => have[ci] && !same(v, vs[first(j)]));
+      const write = (code, surf, vs, int2, fmt = v => v) => {
+        if (differ(vs)) vs.forEach((v, ci) => op(code, surf, ci, fmt(v), int2));
+      };
+      write(
+        'THIC',
+        sEl,
+        each(h => E(h.disz)),
+        0,
+      );
+      for (let p = 0; p < 5; p++)
+        write(
+          'PRAM',
+          sEl + 1,
+          each(h => E(h.cb[p])),
+          p + 1,
+        );
+      write(
+        'CRVT',
+        sEl,
+        each(h => val(h.lines, 'CURV')),
+        0,
+      );
+      write(
+        'CONN',
+        sEl,
+        each(h => val(h.lines, 'CONI') ?? E(0)),
+        0,
+      );
+      if (base.type === 'PARAXIAL')
+        write(
+          'PRAM',
+          sEl,
+          each(h => val(h.lines, 'PARM 1') ?? E(0)),
+          1,
+        );
+      write(
+        'MCOM',
+        sEl,
+        each(h => val(h.lines, 'COMM') ?? ''),
+        0,
+        v => `"${v}"`,
+      );
+      if (differ(each(h => h.type)))
+        warnings.push(
+          `${key}: its type differs between configurations; written as configuration ${first(j) + 1}'s`,
+        );
+      if (differ(each(h => val(h.lines, 'GLAS') ?? '')))
+        warnings.push(
+          `${key}: its glass differs between configurations; written as configuration ${first(j) + 1}'s`,
+        );
+    });
+    sf.push(['TYPE STANDARD', 'CURV 0', 'DISZ 0']); // the image, on the last surface met
+    const r0 = designs[active].rows[0];
+    for (const d of designs)
+      if (d.rows[0].ap !== r0.ap || (d.rows[0].R || 0) !== (r0.R || 0))
+        warnings.push(
+          `${d.name || 'a configuration'}: its entrance pupil or beam differs; written as the saved configuration's`,
+        );
+    const head = [
+      'VERS 190513 80 123457',
+      'MODE SEQ',
+      `NAME ${name}`,
+      'UNIT MM X W X CM MR CPMM',
+      `ENPD ${E(2 * r0.ap)}`,
+      'GCAT SCHOTT',
+      'RAIM 0 0 1 1 0 0 0 0 0',
+      `FTYP ${r0.R ? 1 : 0} 0 ${fields.length} ${waves.length} 0 0 0`,
+      `XFLN ${fields.map(f => (Array.isArray(f) ? f[0] : 0)).join(' ')}`,
+      `YFLN ${fields.map(f => (Array.isArray(f) ? f[1] : f)).join(' ')}`,
+      `FWGN ${fields.map(() => 1).join(' ')}`,
+      ...waves.map((l, k) => `WAVM ${k + 1} ${l} 1`),
+      'PWAV 1',
+      'SURF 0',
+      '  TYPE STANDARD',
+      '  CURV 0',
+      `  DISZ ${r0.R ? E(-r0.R) : 'INFINITY'}`,
+      ...sf.flatMap((l, i) => [`SURF ${i + 1}`, ...l.map(x => '  ' + x)]),
+    ];
+    const mce =
+      nC < 2
+        ? []
+        : [
+            `MNUM ${nC} ${active + 1}`,
+            ...designs.map(
+              (d, ci) => `MOFF 0 ${ci + 1} "${(d.name ?? '').replace(/"/g, "'")}" 0 0 0 1 1 0 0.0 "" 0`,
+            ),
+            ...ops,
+          ];
+    return { text: [...head, ...mce].join('\r\n') + '\r\n', warnings };
   }
 
   /** Text of a .zmx file from its bytes: OpticStudio saves UTF-16 (little-endian, with a byte-order mark); older files are
@@ -1088,6 +1339,7 @@
     facingBack,
     planeAt,
     frameAt,
+    zemaxConfigs,
   });
   if (typeof module === 'object') module.exports = Optics;
 })(typeof module === 'object' ? require('./edit.js') : globalThis.Optics);

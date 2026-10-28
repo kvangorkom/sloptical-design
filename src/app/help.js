@@ -138,7 +138,7 @@ function helpDialog(view = 'keys') {
     ],
     [
       'Configurations',
-      'several versions of one design (+ Configuration in the surface table’s bar). A value can differ in each configuration (a cell’s popover: marked with a bar), and the Configs column says which configurations have each surface, so one can have optics another lacks (they fork there). The eye draws other configurations faded; the Zemax export writes one .zmx per configuration, batoid and optiland the active one.',
+      'several versions of one design (+ Configuration in the surface table’s bar). A value can differ in each configuration (a cell’s popover: marked with a bar), and the Configs column says which configurations have each surface, so one can have optics another lacks (they fork there). The eye draws other configurations faded; the Zemax export writes one .zmx with every configuration in its multi-configuration editor, batoid and optiland the active one.',
     ],
     [
       'Surface table',

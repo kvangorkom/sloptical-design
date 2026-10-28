@@ -112,28 +112,34 @@ function exportPy(lib) {
     () => toast(`Exported ${name}${which}${note}`),
   );
 }
-/** One .zmx; with configurations, a .zip of one .zmx per configuration (the active one also on the clipboard). */
+/** One .zmx; with configurations, one .zmx with them all in OpticStudio's multi-configuration editor (the active one the
+ *  saved configuration). Also on the clipboard. */
 function exportZmx() {
-  const zmx = (rows, ci) =>
-    Optics.zemax(rows, {
-      fields: sys.fields,
-      lambda: sys.lambda,
-      lambdas: sys.lambdas,
-      name: exportStem(ci),
-    });
-  const txt = zmx(sys.rows, sys.configs?.active);
+  const opts = { fields: sys.fields, lambda: sys.lambda, lambdas: sys.lambdas };
   const note = equatorNote('OpticStudio');
   if (sys.configs) {
     const C = sys.configs;
-    const files = C.list.map((c, ci) => ({
-      name: exportStem(ci) + '.zmx',
-      text: ci === C.active ? txt : zmx(Optics.solvedConfig(sys, ci), ci),
-    }));
-    const name = exportBase() + '_configs.zip';
-    download(name, new Blob([zipFiles(files)], { type: 'application/zip' }));
-    navigator.clipboard?.writeText(txt).catch(() => {});
-    return toast(`Exported ${name}: one .zmx for each of the ${C.list.length} configurations${note}`);
+    let out;
+    try {
+      out = Optics.zemaxConfigs(
+        C.list.map((c, ci) => ({
+          name: c.name,
+          rows: ci === C.active ? sys.rows : Optics.solvedConfig(sys, ci),
+        })),
+        { ...opts, name: exportBase(), active: C.active },
+      );
+    } catch (e) {
+      return toast(e.message);
+    }
+    const name = exportBase() + '.zmx';
+    download(name, new Blob([out.text], { type: 'text/plain' }));
+    navigator.clipboard?.writeText(out.text).catch(() => {});
+    const warn = out.warnings.length ? ` (${out.warnings.join('; ')})` : '';
+    return toast(
+      `Exported ${name}: the ${C.list.length} configurations in its multi-configuration editor${warn}${note}`,
+    );
   }
+  const txt = Optics.zemax(sys.rows, { ...opts, name: exportStem() });
   download(file.name.replace(/\.json$/, '') + '.zmx', new Blob([txt], { type: 'text/plain' }));
   navigator.clipboard?.writeText(txt).then(
     () => toast(`Exported the .zmx (also on the clipboard)${note}`),
