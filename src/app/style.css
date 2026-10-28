@@ -1500,6 +1500,28 @@ label.dp {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+#roCfg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+}
+#roCfg[hidden] {
+  display: none;
+}
+#roCfg select {
+  font: 12px var(--ui);
+  max-width: 34ch;
+  padding: 1px 4px;
+}
+#roCfg button {
+  font: 14px/1 var(--ui);
+  padding: 1px 7px;
+}
+/* a read-only page: configurations can be shown and drawn, not added or deleted */
+body.viewer #cfgBar :is([data-cfg='add'], .cfgX) {
+  display: none !important;
+}
 body.viewer
   :is(#docName, #tabs, #exBtn, #exMenu, #focus, label:has(#stig), #stigMode, #drawM, #undo, #redo, #shapeBar),
 body.viewer

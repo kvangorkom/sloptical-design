@@ -150,6 +150,21 @@ function viewerStart(D) {
     showWatch(true);
     if (Array.isArray(D.watch)) placeWatch(D.watch);
   }
+  if (D.sys.configs) {
+    // a configuration picker beside the badge, and the configuration named in the address (#<id or name>) shown first
+    const sel = $('roSel');
+    sel.replaceChildren(
+      ...D.sys.configs.list.map((c, i) => new Option(cfgLetter(i) + ' · ' + c.name, String(i))),
+    );
+    sel.onchange = () => setConfig(+sel.value);
+    const step = k => setConfig((sys.configs.active + k + sys.configs.list.length) % sys.configs.list.length);
+    $('roPrev').onclick = () => step(-1);
+    $('roNext').onclick = () => step(1);
+    $('roCfg').hidden = false;
+    cfgFromHash();
+    addEventListener('hashchange', cfgFromHash);
+    syncRoCfg();
+  }
   for (const q of D.pops ?? []) {
     const p = makePop();
     Object.assign(p, { tgt: q.tgt, mode: q.mode ?? undefined, pinned: true, docked: true, pos: q.pos });
@@ -160,7 +175,8 @@ function viewerStart(D) {
   draw();
 }
 
-// Keys that would change the system do nothing on a read-only page (view keys, H, W, D, T still work).
+// Keys that would change the system do nothing on a read-only page (view keys, H, W, D, T and the configuration keys
+// still work: showing another configuration changes what is shown, not the system).
 if (VIEWER)
   document.addEventListener(
     'keydown',
@@ -170,7 +186,7 @@ if (VIEWER)
         e.metaKey || e.ctrlKey
           ? ['z', 'y', 's', 'o'].includes(k)
           : !e.target.closest?.('input, textarea, select') &&
-            ['a', 'm', 'b', 's', 'c', '[', ']', 'delete', 'backspace'].includes(k);
+            ['a', 'm', 'b', 's', 'delete', 'backspace'].includes(k); // ([, ] and C still step through configurations)
       if (edit) {
         e.stopImmediatePropagation();
         e.preventDefault();
@@ -178,3 +194,23 @@ if (VIEWER)
     },
     true,
   );
+
+/** A read-only page's configuration picker, showing the active configuration. */
+function syncRoCfg() {
+  if (sys?.configs && $('roSel')) $('roSel').value = String(sys.configs.active);
+}
+/** The configuration the address names (#<its id, its name, or either written with hyphens for spaces and underscores,
+ *  any case>), shown; nothing when it names none (or holds a read-only link's design, #v=…). */
+function cfgFromHash() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (!h || h.startsWith('v=') || !sys.configs) return;
+  const slug = t =>
+    String(t)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+  const ci = sys.configs.list.findIndex(
+    c => c.id === h || c.name === h || slug(c.id) === slug(h) || slug(c.name) === slug(h),
+  );
+  if (ci >= 0) setConfig(ci);
+}

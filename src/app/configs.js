@@ -123,6 +123,7 @@ function setConfig(ci) {
   const ids = sys.rows.map(r => r.id);
   Optics.setActive(sys, ci);
   rowsChanged(ids);
+  if (VIEWER) syncRoCfg(); // (a read-only page's picker)
 }
 
 $('cfgBar').onclick = e => {
