@@ -17,7 +17,20 @@
   <body>
     <header>
       <b>Sloptical Design</b><span id="docName" title="Current file (• unsaved changes)"></span
-      ><span id="roBadge" hidden></span>
+      ><span id="roBadge" hidden></span
+      ><span id="roCfg" hidden
+        ><button
+          id="roPrev"
+          type="button"
+          aria-label="Previous configuration"
+          title="Previous configuration ([)"
+        >
+          ‹</button
+        ><select id="roSel" aria-label="Configuration shown"></select
+        ><button id="roNext" type="button" aria-label="Next configuration" title="Next configuration (])">
+          ›
+        </button></span
+      >
       <div class="menu">
         <button id="fileBtn" aria-haspopup="menu" aria-expanded="false">File</button>
         <div class="menuList" id="fileMenu" role="menu" hidden>

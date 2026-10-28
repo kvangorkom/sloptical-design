@@ -160,6 +160,9 @@ const parse = (k, s) => (
 );
 const tok = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const label = i => sys.rows[i + 1]?.name || 'S' + (i + 1);
+/** Whether surface i is labelled in the layout and figures (a row's `nolabel` turns its label off: e.g. reference planes in
+ *  a sequence of figures, where the optics' names matter). */
+const labelled = i => !sys.rows[i + 1]?.nolabel;
 /** Text made safe to put in HTML (names come from design files and links, which anyone can write). */
 const escHTML = t => String(t).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const fl = f => (sys.rows[0].R ? `${fstr(f)} mm` : `${fstr(f)}°`); // a field value with its unit
