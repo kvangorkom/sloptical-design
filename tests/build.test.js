@@ -42,7 +42,9 @@ test('build: one file with every local script and stylesheet inlined and the lis
   const strip = h =>
     h
       .replace(/<script type="text\/x-python"[\s\S]*?<\/script>\n/g, '')
-      .replace(/<script>\n[\s\S]*?<\/script>/g, () => `<script src="${local[n++]}"></script>`)
+      .replace(/<script>\n[\s\S]*?<\/script>/g, b =>
+        /^<script>\s*window\.PAGE0/.test(b) ? b : `<script src="${local[n++]}"></script>`,
+      ) // (the page's own inline script, which keeps its markup for read-only pages, stays as it is)
       .replace(/<style>\n[\s\S]*?<\/style>/, '<link rel="stylesheet" href="src/app/style.css" />');
   assert.equal(strip(html), src);
   fs.rmSync(dir, { recursive: true });

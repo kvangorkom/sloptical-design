@@ -13,15 +13,29 @@ const X = p =>
   side ? [view.ox + fz * p[2] * view.s, view.oy - fy * p[1] * view.s] : View3D.project(cam, view, F3(p)); // world → screen
 const viewDir = () => F3(View3D.camBack(cam)); // world direction toward the viewer
 
-/** Everything drawn, as world points (for fitting the view). */
-const drawn = () => [
-  ...T.flat().flatMap(r => r.map(q => q.p)),
-  ...S.flatMap(s => s.prof),
-  ...sys.fields.flatMap(src),
-  ...sys.shapes.flatMap(SH.outline),
-  ...CJ.map(c => c.p),
-  ...(look3() ? S.flatMap(s => rim3(s)) : []),
-];
+/** The corners of the design's fixed extent (sys.extent: [[x0, y0, z0], [x1, y1, z1]], world mm), or null. A design that
+ *  has one is framed by it, on screen and in figures, whatever is drawn: a sequence of designs (or configurations) then
+ *  shares one view and scale. */
+const extentCorners = () => {
+  const E = sys?.extent;
+  if (!Array.isArray(E) || E.length !== 2 || !E.flat().every(Number.isFinite)) return null;
+  const [a, b] = E;
+  return [0, 1, 2, 3, 4, 5, 6, 7].map(k => [k & 1 ? b[0] : a[0], k & 2 ? b[1] : a[1], k & 4 ? b[2] : a[2]]);
+};
+/** Everything drawn, as world points (for fitting the view); the fixed extent's corners when the design has one. */
+const drawn = () => {
+  const E = extentCorners();
+  if (E) return E;
+  const D = drawRange(viewSpan()); // (Show ▸ Surfaces: those drawn)
+  const Sr = S.filter((_, i) => D.inR(i));
+  return [
+    ...sys.fields.flatMap((f, j) => T[j].flatMap(r => D.ray(f, r))),
+    ...Sr.flatMap(s => s.prof),
+    ...sys.shapes.flatMap(SH.outline),
+    ...CJ.filter(D.conj).map(c => c.p),
+    ...(look3() ? Sr.flatMap(s => rim3(s)) : []),
+  ];
+};
 function fit(P = drawn(), k = 0.88, c = cam) {
   view = fitted(P, k, c);
 }
@@ -114,7 +128,7 @@ function setCam(c, fit) {
   const t0 = performance.now();
   const quick = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!fit) centrePivot();
-  const tv = fit && fitted(drawn().concat(side ? S.flatMap(rim3) : []), 0.88, c); // (the rims too: they show from the new side)
+  const tv = fit && fitted(extentCorners() ?? drawn().concat(side ? S.flatMap(rim3) : []), 0.88, c); // (the rims too: they show from the new side)
   if (tv) {
     view.c = tv.c;
     view.D = tv.D;

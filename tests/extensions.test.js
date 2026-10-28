@@ -6,7 +6,15 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
+const near = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `got ${a}, expected ${b} ± ${tol}`);
 const src = fs.readFileSync(path.join(root, 'extensions/talbot.py'), 'utf8');
+// A ray in free space z from where it left pupil point (px, py) at field angle(s) (degrees: a number for y, or [x, y]).
+const FREE = `
+def free(z, field, px, py):
+    fx, fy = field if isinstance(field, (list, tuple)) else (0.0, field)
+    tx, ty = math.tan(math.radians(fx)), math.tan(math.radians(fy))
+    n = math.sqrt(1 + tx*tx + ty*ty)
+    return {"x": px + z*tx, "y": py + z*ty, "dx": tx/n, "dy": ty/n, "dz": 1/n, "index": 1.0, "L": 0.0}`;
 
 test('extensions live in extensions/, not in the page: the page embeds no Python and reads the folder', () => {
   const app = path.join(root, 'src/app');
@@ -27,10 +35,10 @@ test(
     const py = `
 import json, math, sys
 exec(open(sys.argv[1]).read())
+${FREE}
 class Ctx(dict):
     def plane(self, seg, s, field, px, py):          # one flat optic, then free space: seg 1 starts on it
-        t = math.radians(field); z = s if seg == 1 else 0.0
-        return {"x": px, "y": py + z*math.tan(t), "dx": 0.0, "dy": math.sin(t), "dz": math.cos(t), "index": 1.0, "L": 0.0}
+        return free(s if seg == 1 else 0.0, field, px, py)
 ctx = Ctx({"target": {"segment": 1, "s": 800.0}, "pupil": {"semi_diameter": 12.5, "beam_R": 0}, "field_unit": "deg",
            "wavelength_um": 0.633, "params": {"optic": "previous", "fmax": 50}, "surfaces": [{"name": "DM"}]})
 print(json.dumps(run(ctx)))`;
@@ -82,10 +90,10 @@ test(
     const py = `
 import json, math, sys
 exec(open(sys.argv[1]).read())
+${FREE}
 class Ctx(dict):
     def plane(self, seg, s, field, px, py):          # pupil, then a flat optic 100 mm on: free space throughout
-        t = math.radians(field); z = s + (100.0 if seg == 1 else 0.0)
-        return {"x": px, "y": py + z*math.tan(t), "dx": 0.0, "dy": math.sin(t), "dz": math.cos(t), "index": 1.0, "L": 0.0}
+        return free(s + (100.0 if seg == 1 else 0.0), field, px, py)
 out = []
 for params, seg in (({"optic": "pupil"}, 1), ({"optic": "previous"}, 0)):
     ctx = Ctx({"target": {"segment": seg, "s": 800.0}, "pupil": {"semi_diameter": 12.5, "beam_R": 0}, "field_unit": "deg",
@@ -98,6 +106,49 @@ print(json.dumps(out))`;
     assert.match(after.notes[0], /^from the entrance pupil: equivalent distance 900 mm, beam Ø 25 mm there/); // 100 + 800
     assert.match(before.notes[0], /^from the entrance pupil: equivalent distance 800 mm/); // 'previous' before the first surface
     assert.equal(after.notes[2], 'z = 0 (images of the entrance pupil): none after it');
+  },
+);
+
+test(
+  'Talbot in 3D: a fold that turns the beam about its axis changes nothing; an astigmatic path gives each ripple orientation its distance',
+  { skip: spawnSync('python3', ['--version']).status !== 0 && 'python3 not found' },
+  () => {
+    const py = `
+import json, math, sys
+exec(open(sys.argv[1]).read())
+${FREE}
+def turned(q):                                   # the plane's axes turned 90° about the beam (a fold out of the plane)
+    return {**q, "x": -q["y"], "y": q["x"], "dx": -q["dy"], "dy": q["dx"]}
+class Fold(dict):
+    def plane(self, seg, s, field, px, py):      # pupil, a fold 100 mm on, free space
+        q = free(s + (100.0 if seg == 1 else 0.0), field, px, py)
+        return turned(q) if seg == 1 else q
+class Cyl(dict):
+    def plane(self, seg, s, field, px, py):      # from the optic, y spreads as if 900/800 as far: an anamorphic path
+        q = free(s if seg == 1 else 0.0, field, px, py)
+        return {**q, "y": q["y"] + (0.125*s*q["dy"]/q["dz"] if seg == 1 else 0.0)}
+base = {"pupil": {"semi_diameter": 12.5, "beam_R": 0}, "field_unit": "deg", "wavelength_um": 0.633,
+        "surfaces": [{"name": "Fold", "hit": [0.0, 100.0], "out_axis": [0.0, 1.0]}]}
+out = [run(Fold({**base, "target": {"segment": 1, "s": 800.0}, "params": {"optic": "pupil"}})),
+       run(Cyl({**base, "target": {"segment": 1, "s": 800.0}, "params": {"optic": "previous"}}))]
+print(json.dumps(out))`;
+    const r = spawnSync('python3', ['-c', py, path.join(root, 'extensions/talbot.py')], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const [fold, cyl] = JSON.parse(r.stdout);
+    assert.match(fold.notes[0], /^from the entrance pupil: equivalent distance 900 mm, beam Ø 25 mm there/);
+    assert.equal(fold.series.length, 1);
+    assert.match(cyl.notes[0], /^from Fold: equivalent distance 850 mm \(800 to 900 by ripple orientation\)/);
+    assert.deepEqual(
+      cyl.series.map(x => x.label),
+      ['z / z_T, ripples at 90°', 'z / z_T, ripples at 0°'],
+    );
+    const lam = 0.633e-3;
+    cyl.series.forEach((x, k) =>
+      x.x.forEach((f, n) =>
+        assert.ok(Math.abs(x.y[n] - (lam * [900, 800][k] * (f / 25) ** 2) / 2) < 1e-9 * x.y[n]),
+      ),
+    );
+    near(cyl.values['equivalent distance spread (mm)'], 100, 1e-6);
   },
 );
 

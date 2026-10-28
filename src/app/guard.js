@@ -11,7 +11,7 @@ const snapGood = () => ({
   fails: new Set(fails),
 });
 const ownVals = r =>
-  JSON.stringify(['type', 'R', 'k', 'd', 'oa', 'tilt', 'tiltY', 'clock', 'pivot', 'n'].map(k => r?.[k])); // a row's own shape and pose (not its distance out)
+  JSON.stringify(['type', 'R', 'k', 'd', 'oa', 'tilt', 'tiltY', 'clock', 'pivot', 'n', 'f'].map(k => r?.[k])); // a row's own shape and pose (not its distance out)
 function guard(pre) {
   // pre: each row's own values as the edit left them, before solves
   if (!$('stig').checked) {
@@ -40,7 +40,8 @@ function guard(pre) {
     if (curved.filter(ri => stigLock(ri, St)).length) fails = Optics.applySolves(sys.rows);
   }
   const Sg = Optics.build(prev);
-  const broken = st => good.stig.flatMap((v, i) => (v === true && st[i] === false ? [i] : []));
+  const broken = st =>
+    good.stig.flatMap((v, i) => (v === true && st[i] === false && !sys.rows[i + 1]?.ball ? [i] : [])); // (a caliball may be decentred or defocused: that is what it is for)
   let now = stigOf(Optics.build(sys.rows));
   let bad = broken(now);
   const follow = bad.filter(i => {

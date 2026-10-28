@@ -11,6 +11,7 @@ function helpDialog(view = 'keys') {
     ['H', 'this help'],
     ['A', 'add a plane where the cursor is on the beam'],
     ['M', 'add a mirror there (Stigmatic: a flat; give it an R to curve it)'],
+    ['B', 'add a caliball there, on the beam’s focus (last: a double pass)'],
     ['drag an optic', 'move it: its parent slides, nothing upstream changes'],
     [`${S.replace('+', '')} drag`, 'move it along the axis only'],
     [`${A.replace('+', '')} drag`, 'tilt it about its pivot (3D views: turn it about the line of sight)'],
@@ -48,6 +49,26 @@ function helpDialog(view = 'keys') {
       'Surface list',
       'conic surfaces placed along the traced axis ray; tilts steer it, with no coordinate breaks.',
     ],
+    [
+      'Double pass',
+      'tick 2× beside the last surface’s type (a mirror): the light comes back off it through every optic before it, in reverse, to the pupil, without copying the system; drawn dashed. A popup’s ⇄ switches between the way out and the way back at the same place, and hovering the return where it runs apart from the way out probes it directly: footprint, spot, WFE and fringes anywhere on the way back.',
+    ],
+    [
+      'Caliball',
+      'Type caliball (or B on the beam): a precision sphere, a convex mirror of radius R, centred on the focus of the beam arriving (a solve on the distance before it: take it off to decentre or defocus the ball), so it sends the light straight back. Put last, it makes the system a double pass, to test it against itself.',
+    ],
+    [
+      'Fringes',
+      'the popup’s Fringes tab: an interferogram of the wavefront. On the way out, its departure from the best-fit sphere (as WFE); on a double pass’s way back, against the light going out at the same place: at the pupil, what an interferometer would see, tilt and focus included.',
+    ],
+    [
+      'Reverse system',
+      'File ▸ Reverse system opens the design run backwards in a new tab: the same optics, the light starting from the image (or collimated, if it left collimated) at the exit pupil, ending where it came in.',
+    ],
+    [
+      'Paraxial lens',
+      'Type paraxial: an ideal thin lens, flat, of focal length f (in the R column; ∞ = no power). It focuses a collimated beam at any angle perfectly, wavefront and all, as OpticStudio’s Paraxial surface does: a stand-in for a telescope or a lens you don’t want to design yet. Drawn with arrowheads (out: converging; in: diverging).',
+    ],
     ['Solves', 'a value can focus the beam on the next surface or collimate it (click the value).'],
     [
       'Focus locks',
@@ -84,7 +105,7 @@ function helpDialog(view = 'keys') {
     ['Rays, Cones', 'show the beam as rays or filled cones.'],
     [
       'Show',
-      'off-axis optics’ whole parents; AOI labels (the chief ray’s angle of incidence on each optic); the watch window.',
+      'off-axis optics’ whole parents; AOI labels (the chief ray’s angle of incidence on each optic); the watch window; and Draw from … to: only part of the system, from one surface (or the pupil) to another (each configuration its own; the PDF figure starts from it too). A dot on Show marks a part drawn.',
     ],
     [
       'Trace',
@@ -105,7 +126,7 @@ function helpDialog(view = 'keys') {
     ],
     [
       'Images',
-      'the Images box on a row marks where that plane (or the entrance pupil) is re-imaged through the system.',
+      'the Images box on a row marks where that plane (or the entrance pupil) is re-imaged through the system, in 3D too (folds out of the plane, compound-angle OAPs). Through tilted or off-axis optics an image is astigmatic: the bar sits midway between its two line images, with the stretch between them marked along the axis (its tooltip gives both). Dashed: virtual, or past the last surface, where the light never gets (an exit pupil behind the image, say).',
     ],
     [
       'Selection',
@@ -113,11 +134,11 @@ function helpDialog(view = 'keys') {
     ],
     [
       'Shapes',
-      'sketch dimensioned rectangles, circles and lines under the layout; drag a selected one’s round knob to rotate it.',
+      'sketch dimensioned rectangles, circles and lines under the layout; drag a selected one’s round knob to rotate it. Scripts can add 3D envelopes, boxes and cylinders placed in the world or riding on a surface’s beam, per configuration (sys.shapes; see src/engine/shapes.js): drawn from any side, not edited here.',
     ],
     [
       'Configurations',
-      'several versions of one design (+ Configuration in the surface table’s bar). A value can differ in each configuration (a cell’s popover: marked with a bar), and the Configs column says which configurations have each surface, so one can have optics another lacks (they fork there). The eye draws other configurations faded; the Zemax export writes one .zmx per configuration, batoid and optiland the active one.',
+      'several versions of one design (+ Configuration in the surface table’s bar). A value can differ in each configuration (a cell’s popover: marked with a bar), and the Configs column says which configurations have each surface, so one can have optics another lacks (they fork there). The eye draws other configurations faded; the Zemax export writes one .zmx with every configuration in its multi-configuration editor, batoid and optiland the active one.',
     ],
     [
       'Surface table',
@@ -126,7 +147,7 @@ function helpDialog(view = 'keys') {
     ['Live', 'File ▸ Watch file redraws whenever a script rewrites the system file.'],
     [
       'Import and export',
-      'Zemax .zmx in (y–z plane by default, as OpticStudio draws it, or x–z; optionally mirrored left–right or up–down) and out, batoid and optiland scripts, and vector PDF figures. File ▸ Copy link puts the whole design in a link that opens it in Sloptical Design.',
+      'Zemax .zmx in and out, batoid and optiland scripts, and vector PDF figures. An import places every surface absolutely, so coordinate breaks vanish, along with the dummy surfaces that only anchor them (unnamed or hidden in OpticStudio; keep them with a box in the import dialog); it reads every configuration of the multi-configuration editor as this tool’s configurations (each leaving out the surfaces it ignores; the values that differ, its own), paraxial lenses, and systems used off-axis (field 1 becomes the axis when there is no on-axis field). It picks the plane the system lies in (y–z, as OpticStudio draws it, or x–z), else 3D; the drawing can be mirrored. File ▸ Copy link puts the whole design in a link that opens it in Sloptical Design. File ▸ Export read-only page saves the design as it is now (view, docked popups, watch window) in one self-contained .html file, and File ▸ Copy read-only link puts the same in a link: anyone can hover, pin popups (values, spots, WFE, fringes, the way back) and pan, zoom and orbit, but nothing in it can change the system.',
     ],
     [
       'Extensions',

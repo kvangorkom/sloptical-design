@@ -16,11 +16,18 @@
   </head>
   <body>
     <header>
-      <b>Sloptical Design</b><span id="docName" title="Current file (• unsaved changes)"></span>
+      <b>Sloptical Design</b><span id="docName" title="Current file (• unsaved changes)"></span
+      ><span id="roBadge" hidden></span>
       <div class="menu">
         <button id="fileBtn" aria-haspopup="menu" aria-expanded="false">File</button>
         <div class="menuList" id="fileMenu" role="menu" hidden>
           <button role="menuitem" data-f="new" title="A new design in its own tab">New design</button
+          ><button
+            role="menuitem"
+            data-f="reverse"
+            title="This design run backwards, in a new tab: the same optics, the light from where it was imaged back to where it came from"
+          >
+            Reverse system</button
           ><button role="menuitem" data-f="open" title="Opens in a new tab">
             Open…<kbd data-k="O"></kbd></button
           ><button role="menuitem" data-f="save">Save<kbd data-k="S"></kbd></button>
@@ -34,6 +41,13 @@
           </button>
           <button
             role="menuitem"
+            data-f="rolink"
+            title="A link that opens this design read-only, as the view is now (docked popups, watch window): to look over, hover and pin, but not change"
+          >
+            Copy read-only link
+          </button>
+          <button
+            role="menuitem"
             data-f="watch"
             id="watchItem"
             title="Re-read the file whenever it changes on disk, so a script can drive the view"
@@ -42,6 +56,12 @@
           </button>
           <hr />
           <button role="menuitem" data-f="pdf">Export figure (PDF)…<kbd data-k="E"></kbd></button
+          ><button
+            role="menuitem"
+            data-f="viewer"
+            title="This design as one HTML file anyone can open and look through (hover the optics, pin popups: WFE, fringes, spots) but not change; it opens as the view is now, with its docked popups"
+          >
+            Export read-only page (.html)</button
           ><button role="menuitem" data-f="zmx">Export Zemax (.zmx)</button>
           <button role="menuitem" data-f="batoid">Export batoid (.py)</button
           ><button role="menuitem" data-f="optiland">Export optiland (.py)</button
@@ -165,6 +185,17 @@
           <label title="Watch window: a small list of values you choose to keep an eye on (W)"
             ><input id="watchBtn" type="checkbox" /> Watch window (W)</label
           >
+          <div
+            class="span"
+            role="group"
+            aria-label="Surfaces drawn"
+            title="Draw only part of the system: from one surface (or the pupil) to another. The rest is left out of the view, the fit and hovering; the design is unchanged. With configurations, each has its own."
+          >
+            <span>Draw from</span
+            ><select id="spanFrom" aria-label="First surface drawn"></select
+            ><span>to</span
+            ><select id="spanTo" aria-label="Last surface drawn"></select>
+          </div>
         </div>
       </div>
       <label
@@ -292,8 +323,15 @@
             <span class="seg popM" role="group" aria-label="Tab"
               ><button data-m="edit" title="Values: this optic's parameters, or the beam's">Values</button
               ><button data-m="footprint">Footprint</button><button data-m="spot">Spot</button
-              ><button data-m="wfe">WFE</button></span
+              ><button data-m="wfe">WFE</button
+              ><button
+                data-m="fringe"
+                title="Fringes: an interferogram of the wavefront (on a double pass's way back, against the light going out)"
+              >
+                Fringes
+              </button></span
             >
+            <button class="popD" hidden aria-pressed="false" aria-label="Way out or way back">⇄</button>
             <button class="popX" aria-label="Close">×</button>
           </div>
           <div class="popS"></div>
@@ -657,6 +695,11 @@
             title="Mirror the drawing top to bottom (the design itself is unchanged)"
             ><input type="checkbox" id="zinUD" /> Flip up–down</label
           >
+          <label
+            style="display: inline-flex; gap: 4px; align-items: center"
+            title="Keep the dummy surfaces (no power, no change of index) that are unnamed or hidden in OpticStudio: those that anchor coordinate breaks, solves and merit-function targets. Left out, the optics are placed exactly as they were"
+            ><input type="checkbox" id="zinDummy" /> Keep dummy surfaces</label
+          >
         </div>
         <div id="zinBody" style="max-width: 520px"></div>
         <menu><button value="ok" class="primary">OK</button></menu>
@@ -686,6 +729,9 @@
       </form>
     </dialog>
 
+    <script>
+      window.PAGE0 = document.documentElement.outerHTML; // (the page as served, before anything changes it: File ▸ Export read-only page)
+    </script>
     <script src="src/engine/vector.js"></script>
     <script src="src/engine/conic.js"></script>
     <script src="src/engine/trace.js"></script>
@@ -695,6 +741,7 @@
     <script src="src/engine/zemax.js"></script>
     <script src="src/engine/python.js"></script>
     <script src="src/engine/configs.js"></script>
+    <script src="src/engine/shapes.js"></script>
     <script src="src/app/view3d.js"></script>
     <script src="src/app/pdf.js"></script>
     <script src="src/app/zip.js"></script>
@@ -726,6 +773,7 @@
     <script src="src/app/figure.js"></script>
     <script src="src/app/measure.js"></script>
     <script src="src/app/help.js"></script>
+    <script src="src/app/viewer.js"></script>
     <script src="src/app/main.js"></script>
   </body>
 </html>

@@ -160,8 +160,19 @@ function drawRange(range) {
     const k = src(f).length;
     return a < 0 ? r.slice(0, k + b + 2) : r.slice(k + a + 1, k + b + 2);
   }; // r: [...src, start, S0, …]
-  const conj = c => (c.j === 0 ? a < 0 : c.j - 1 >= a) && (c.j === n ? b === n - 1 : c.j <= b); // segment j runs from S[j−1] (the pupil) to S[j]
-  return { a, b, inR, ray, cone, conj, all: a < 0 && b === n - 1 };
+  const segIn = j => (j === 0 ? a < 0 : j - 1 >= a) && (j === n ? b === n - 1 : j <= b); // segment j runs from S[j−1] (the pupil) to S[j]
+  const conj = c => segIn(c.j);
+  return { a, b, inR, ray, cone, conj, segIn, all: a < 0 && b === n - 1 };
+}
+/** The surfaces the view draws (Show ▸ Surfaces), [first, last] as drawRange takes them (−1: from the pupil; to the last),
+ *  for configuration k (default: the one shown), or null for all of them. sys.span: [from, to] (to −1: the last), or with
+ *  configurations { [configuration id]: [from, to] }, each its own (their surfaces differ). n: that layout's surfaces. */
+function viewSpan(k = sys.configs?.active, n = S.length) {
+  const sp = sys.configs ? sys.span?.[sys.configs.list[k]?.id] : Array.isArray(sys.span) ? sys.span : null;
+  if (!sp) return null;
+  const a = Number.isInteger(sp[0]) && sp[0] >= -1 && sp[0] < n ? sp[0] : -1;
+  const b = Number.isInteger(sp[1]) && sp[1] >= 0 && sp[1] < n - 1 ? Math.max(a, sp[1]) : n - 1;
+  return a < 0 && b === n - 1 ? null : [a, b];
 }
 /** Draw the layout with pen g, mapping world points to device points with M. Shared by the screen and the PDF export.
  *  o: { fields (indices), beam: 'rays'|'cones'|'both', fc(j), ink, mute, glass, glassLine, blank, blankLine, font, size,
@@ -172,6 +183,94 @@ function drawRange(range) {
  *       range ([first, last] surface to draw, −1 = the pupil; see drawRange),
  *       under (draws what lies under the layout but over the shapes: the other configurations),
  *       others (the figure: the other configurations drawn, layouts with k and range, whose optics are labelled too) } */
+/** Where an optic's label goes from: the ends of its profile (3D: its rim; a caliball: its outline), or, when none of that
+ *  can be drawn (a rim off its parent), its hit point. */
+function labelEnds(s, o, M) {
+  const P = s.ball ? ballRim(s, o.d3) : o.d3 ? rim3(s) : [s.prof[0], s.prof.at(-1)].filter(Boolean);
+  return P.length ? P.map(M) : [M(s.P)];
+}
+/** A caliball (a mirror with ball): its centre, and its outline, the great circle across the y–z plane, or (look) across
+ *  the line of sight, which is its silhouette from any side. */
+const ballC = s => Optics.add(s.V, s.ez, 1 / s.c);
+function ballRim(s, look) {
+  const C = ballC(s);
+  const r = Math.abs(1 / s.c);
+  const w = look && typeof viewDir === 'function' ? Optics.unit(viewDir()) : [1, 0, 0];
+  const a = Optics.unit(Math.abs(w[0]) < 0.9 ? Optics.cross(w, [1, 0, 0]) : Optics.cross(w, [0, 1, 0]));
+  const b = Optics.cross(w, a);
+  return Array.from({ length: 73 }, (_, k) => {
+    const t = (k * Math.PI) / 36;
+    return C.map((v, m) => v + r * (Math.cos(t) * a[m] + Math.sin(t) * b[m]));
+  });
+}
+const ballStyle = (o, hot, s = {}) => ({
+  color: roleFill(s, o.blank ?? o.glass),
+  stroke: hot ? o.accent : roleLine(s, o.blankLine ?? o.ink),
+  width: hot ? 1.5 * o.lw.optic : o.lw.optic,
+});
+/** A surface's (or shape's) own colour, its row's `color` (e.g. a role in a sequence of figures: the optic being aligned,
+ *  test equipment): its lines in that colour, its fills a pale tint of it. Without one, the pen's. */
+const roleLine = (s, base) => s?.color || base;
+function roleFill(s, base) {
+  const c = s?.color;
+  if (!c) return base;
+  const h = c.replace('#', '');
+  const v = (h.length === 3 ? [...h].map(x => x + x) : h.match(/../g)).slice(0, 3).map(x => parseInt(x, 16));
+  return (
+    '#' +
+    v
+      .map(x =>
+        Math.round(x + (255 - x) * 0.72)
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
+}
+/** A double pass's way back (TB): dashed, in each field's colour; as cones, just the fan's edge rays (the cones already
+ *  show where the light goes, and coming straight back it overlies them). */
+function drawReturn(g, M, o) {
+  o.fields.forEach(j => {
+    const rays = TB[j] ?? [];
+    const pick = o.beam === 'cones' ? [rays[0], rays.at(-1)].filter(Boolean) : rays;
+    for (const rs of pick)
+      if (rs.length > 1)
+        g.line(
+          rs.map(q => M(q.p)),
+          {
+            color: o.fc(j),
+            width: Math.max(o.lw.ray, 0.8 * o.lw.optic),
+            alpha: Math.max(o.rayAlpha ?? 0.8, 0.6),
+            dash: [4 * o.lw.optic, 3 * o.lw.optic],
+          },
+        );
+  });
+}
+/** An ideal (paraxial) lens's symbol on its line P (screen points): arrowheads at both ends, pointing out for a
+ *  converging lens (f > 0) and in for a diverging one. */
+function lensArrows(g, P, f, st) {
+  if (P.length < 2 || !f) return;
+  const [a, b] = [P[0], P.at(-1)];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (!(L > 0)) return;
+  const d = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+  const h = Math.min(9 * st.width, L / 4);
+  for (const [e, s] of [
+    [b, 1],
+    [a, -1],
+  ]) {
+    const o = f > 0 ? s : -s; // (out: the tip at the end; in: the tip at the end, opening outward)
+    const base = [e[0] - o * h * d[0], e[1] - o * h * d[1]];
+    g.line(
+      [
+        [base[0] - 0.55 * h * d[1], base[1] + 0.55 * h * d[0]],
+        e,
+        [base[0] + 0.55 * h * d[1], base[1] - 0.55 * h * d[0]],
+      ],
+      st,
+    );
+  }
+}
 function render(g, M, o) {
   const hot = i => o.hots?.has(i);
   const fw = o.fields;
@@ -208,17 +307,18 @@ function render(g, M, o) {
   else {
     S.forEach((s, i) => {
       if (!s.mirror && s.nOut > 1 && S[i + 1] && inR(i) && inR(i + 1))
-        g.fill([[...pf(s), ...pf(S[i + 1]).toReversed()].map(M)], { color: o.glass });
+        g.fill([[...pf(s), ...pf(S[i + 1]).toReversed()].map(M)], { color: roleFill(s, o.glass) });
     });
     S.forEach((s, i) => {
       if (!s.mirror || !inR(i)) return;
+      if (s.ball) return void g.fill([ballRim(s).map(M)], ballStyle(o, hot(i), s)); // a caliball: the whole sphere
       if (o.blanks)
         g.fill([Optics.blank(s, s.y0, s.y1, (s.y1 - s.y0) / 6).map(M)], {
-          color: o.blank,
-          stroke: hot(i) ? o.accent : o.blankLine,
-          width: hot(i) ? 1.5 * o.lw.optic : o.lw.optic * 0.7,
+          color: roleFill(s, o.blank),
+          stroke: hot(i) ? o.accent : roleLine(s, o.blankLine),
+          width: hot(i) ? 1.5 * o.lw.optic : o.lw.optic * (s.color ? 1 : 0.7),
         });
-      else g.line(s.prof.map(M), { color: hot(i) ? o.accent : o.ink, width: 1.6 * o.lw.optic });
+      else g.line(s.prof.map(M), { color: hot(i) ? o.accent : roleLine(s, o.ink), width: 1.6 * o.lw.optic });
     });
     if (o.beam !== 'rays') {
       if (o.coneLayer) o.coneLayer();
@@ -239,21 +339,27 @@ function render(g, M, o) {
       );
     if (o.conj) for (const c of CJ) if (D.conj(c)) conjBar(g, M, o, c);
   }
+  if (TB && D.all) drawReturn(g, M, o); // a double pass: the light on its way back
   const LP = o.place && (o.labels || o.aoi) ? placeLabels(g, M, o, D) : null; // (the figure: labels clear of the beam)
   S.forEach((s, i) => {
     if (!inR(i)) return;
     if (o.axes) axisFoci(g, M, o, s, i);
     if (!s.mirror && !o.d3)
       g.line(pf(s).map(M), {
-        color: hot(i) ? o.accent : o.glassLine,
-        width: o.lw.optic,
-        dash: s.n === s.nIn && !s.c ? [5 * o.lw.optic, 3 * o.lw.optic] : [],
+        color: hot(i) ? o.accent : roleLine(s, o.glassLine),
+        width: s.para ? 1.4 * o.lw.optic : o.lw.optic,
+        dash: s.n === s.nIn && !s.c && !s.para ? [5 * o.lw.optic, 3 * o.lw.optic] : [],
+      });
+    if (s.para && !o.d3)
+      lensArrows(g, pf(s).map(M), s.f, {
+        color: hot(i) ? o.accent : roleLine(s, o.glassLine),
+        width: 1.4 * o.lw.optic,
       });
     if (o.labels && LP?.[i]?.name) {
       const L = LP[i].name;
       g.text(L.t, [L.x, L.y], {
         size: L.fs,
-        color: hot(i) ? o.accent : o.mute,
+        color: hot(i) ? o.accent : roleLine(s, o.mute),
         font: o.font,
         align: 'center',
         lead: L, // (a pen that moves texts draws the arrow, from where the text ends up)
@@ -262,7 +368,7 @@ function render(g, M, o) {
       if (!g.leads) leader(g, L, o);
     } else if (o.labels) {
       // centred above the optic's upper end, kept inside the page
-      const ends = o.d3 ? rim3(s).map(M) : [M(s.prof[0]), M(s.prof.at(-1))];
+      const ends = labelEnds(s, o, M);
       const [x, y] = ends.reduce((a, b) => (b[1] <= a[1] ? b : a));
       const t = label(i);
       const w = g.width(t, o.size, o.font);
@@ -291,7 +397,7 @@ function render(g, M, o) {
       if (!g.leads) leader(g, L, o);
     } else if (o.aoi && q && (s.mirror || s.c || s.n !== s.nIn || s.tilt)) {
       // under the optic's lower end (not on plain, untilted planes)
-      const ends = o.d3 ? rim3(s).map(M) : [M(s.prof[0]), M(s.prof.at(-1))];
+      const ends = labelEnds(s, o, M);
       const [x, y] = ends.reduce((a, b) => (b[1] >= a[1] ? b : a));
       const t = aoiText(q);
       const fs = 0.9 * o.size;
@@ -324,7 +430,8 @@ function render(g, M, o) {
     }
 }
 
-/** An image of a plane: a bar across the axis, labelled with a prime (dashed: virtual). */
+/** An image of a plane: a bar across the axis, labelled with a prime (dashed: virtual, or past the last surface, where the
+ *  light never gets). An astigmatic one also marks the stretch of axis between its two line images, with a tick at each. */
 function conjBar(g, M, o, c) {
   const e = o.d3 ? across(c.u) : c.e;
   const mid = M(c.p);
@@ -333,11 +440,18 @@ function conjBar(g, M, o, c) {
   const dl = Math.hypot(...d) || 1;
   const hp = Math.max(c.half * dl, 3 * o.lw.optic);
   const ends = [-1, 1].map(k => [mid[0] + (k * hp * d[0]) / dl, mid[1] + (k * hp * d[1]) / dl]); // at least a short bar
-  g.line(ends, {
-    color: o.conj,
-    width: 1.4 * o.lw.optic,
-    dash: c.virtual ? [3 * o.lw.optic, 2 * o.lw.optic] : [],
-  });
+  const dash = c.virtual || c.past ? [3 * o.lw.optic, 2 * o.lw.optic] : [];
+  g.line(ends, { color: o.conj, width: 1.4 * o.lw.optic, dash });
+  const A = c.lines?.map(M);
+  if (A && Math.hypot(A[1][0] - A[0][0], A[1][1] - A[0][1]) > 2 * o.lw.optic) {
+    g.line(A, { color: o.conj, width: 0.8 * o.lw.optic, dash });
+    const tk = (3 * o.lw.optic) / dl;
+    for (const q of A)
+      g.line(
+        [-1, 1].map(k => [q[0] + k * tk * d[0], q[1] + k * tk * d[1]]),
+        { color: o.conj, width: 0.8 * o.lw.optic },
+      );
+  }
   const top = ends[0][1] < ends[1][1] ? ends[0] : ends[1];
   const name = c.ri ? label(c.ri - 1) : 'pupil';
   g.text(`${name}′`, [top[0], top[1] - o.size * 0.45], {
@@ -412,13 +526,15 @@ function solids3(g, M, o, D) {
   }
   S.forEach((s, i) => {
     if (!D.inR(i) || done.has(i)) return;
+    if (s.ball)
+      return items.push([dep(ballC(s)), () => g.fill([ballRim(s, true).map(M)], ballStyle(o, hot(i), s))]);
     if (s.mirror) {
       const B = Optics.blankSolid(s, s.y0, s.y1, (s.y1 - s.y0) / 6, s.w3);
       const n = unit(s.seg ? s.ey.map((v, k) => v * s.nb[1] + s.ez[k] * s.nb[2]) : s.ez); // the back's normal, outward
       return items.push([
         dep(s.P),
         () => {
-          if (!o.blanks || !B.section.length) return void g.line(ring(B.front), soft(i, o.ink));
+          if (!o.blanks || !B.section.length) return void g.line(ring(B.front), soft(i, roleLine(s, o.ink)));
           return cylinder(
             i,
             B.front,
@@ -426,8 +542,8 @@ function solids3(g, M, o, D) {
             B.section,
             dished(s, n) ? [s.sl] : [],
             n,
-            o.blank,
-            o.blankLine,
+            roleFill(s, o.blank),
+            roleLine(s, o.blankLine),
             [Optics.dot(n, b) > 0 ? B.back : B.front],
           );
         },
@@ -449,18 +565,20 @@ function solids3(g, M, o, D) {
             [...s.sl, ...n.sl.toReversed()],
             [...(dished(s, ax) ? [s.sl] : []), ...(dished(n, back) ? [n.sl] : [])],
             ax,
-            o.glass,
-            o.glassLine,
+            roleFill(s, o.glass),
+            roleLine(s, o.glassLine),
             [rim3(s), rim3(n)],
           ),
       ]);
     }
-    const d = s.n === s.nIn && !s.c ? [5 * lw, 3 * lw] : []; // a plain plane (dashed) or a lone interface: its rim and section
+    const d = s.n === s.nIn && !s.c && !s.para ? [5 * lw, 3 * lw] : []; // a plain plane (dashed) or a lone interface: its rim and section
     items.push([
       dep(s.P),
       () => {
-        g.line(ring(rim3(s)).map(M), { ...soft(i, o.glassLine), dash: d });
-        g.line(s.sl.map(M), { ...soft(i, o.glassLine), dash: d });
+        g.line(ring(rim3(s)).map(M), { ...soft(i, roleLine(s, o.glassLine)), dash: d });
+        g.line(s.sl.map(M), { ...soft(i, roleLine(s, o.glassLine)), dash: d });
+        if (s.para)
+          lensArrows(g, s.sl.map(M), s.f, { ...soft(i, roleLine(s, o.glassLine)), width: 1.4 * lw }); // an ideal lens
       },
     ]);
   });
@@ -637,7 +755,8 @@ function placeLabels(g, M, o, D) {
       boxes.push([x, p[1] - 0.8 * fs, x + w, p[1] + 0.25 * fs]);
     }
     for (const sh of sys.shapes) {
-      const P = SH.outline(sh).map(M);
+      const P = Optics.isSolid(sh) ? Optics.hull2(SH.outline(sh).map(M)) : SH.outline(sh).map(M);
+      if (P.length < 2) continue;
       const E = sh.type === 'line' ? P : [...P, P[0]];
       for (let k = 1; k < E.length; k++) edges.push([E[k - 1], E[k]]);
     }
@@ -867,12 +986,16 @@ function leader(g, L, o) {
     { color: o.mute },
   );
 }
-const bbox = P => [
-  Math.min(...P.map(p => p[0])),
-  Math.min(...P.map(p => p[1])),
-  Math.max(...P.map(p => p[0])),
-  Math.max(...P.map(p => p[1])),
-];
+const bbox = P => {
+  const b = [Infinity, Infinity, -Infinity, -Infinity]; // (a loop: a big beam has too many points to spread into Math.min)
+  for (const [x, y] of P) {
+    if (x < b[0]) b[0] = x;
+    if (y < b[1]) b[1] = y;
+    if (x > b[2]) b[2] = x;
+    if (y > b[3]) b[3] = y;
+  }
+  return b;
+};
 const withBox = P => ({ P, box: bbox(P) });
 function inPoly(P, x, y) {
   let c = false;
@@ -1051,7 +1174,8 @@ function viewMoved() {
 }
 function coneLayer(o, W, H, dpr) {
   const x = o.mix2;
-  const key = [W, H, o.fc(0), o.coneAlpha, o.fields.join(), fz, fy, JSON.stringify(x)].join();
+  const key = [W, H, o.fc(0), o.coneAlpha, o.fields.join(), fz, fy, JSON.stringify(x), o.range].join();
+  const D = drawRange(o.range);
   const same = cone.key === key && cone.C === C && cone.snap;
   const still =
     same &&
@@ -1074,7 +1198,7 @@ function coneLayer(o, W, H, dpr) {
     const pen = canvasPen(g);
     const fs = x ? o.fields.toReversed() : o.fields; // (File ▸ Options can mix them in this view too: first field painted last)
     fs.forEach(j =>
-      pen.fill(coneShape(C[j].map(q => q && q.map(X))), {
+      pen.fill(coneShape(C[j].map(q => q && D.cone(sys.fields[j], q).map(X))), {
         color: o.fc(j),
         alpha: !x ? o.coneAlpha : x.layer ? 1 : x.alpha,
         blend: x?.blend,
@@ -1160,11 +1284,13 @@ function draw() {
     d3: look3(),
     mix: coneMix(),
     mix2: opts.cone2d ? coneMix() : null,
+    range: viewSpan(), // (Show ▸ Surfaces: null, all of them)
   }; // (mix: how cones mix, File ▸ Options; mix2: in the planar view too)
   if (o.d3)
     S.forEach(s => (s.sl = slice3(s))); // what is drawn of each optic from here (its section facing the viewer)
   else o.coneLayer = () => coneLayer(o, W, H, r); // the screen draws cones through its cache
   if (ghosts.length) o.under = () => drawGhosts(g, X, o); // other configurations shown: faded, under the active one
+  $('showBtn').classList.toggle('span', !!o.range); // (a mark: part of the system drawn)
   render(g, X, o);
   drawMeasure(g); // (the measuring tool's line, if any)
   S.forEach((s, i) => {
@@ -1234,10 +1360,12 @@ function draw() {
   pops().forEach(p => {
     const t = p.tgt;
     if (t?.j === undefined) return; // probe planes across the beam
-    const u = AX[t.j].u;
-    const Q = at(t.j, t.s);
+    const bk = t.back && AXB?.[t.j]; // (on a double pass's way back)
+    if (t.back && !bk) return;
+    const u = bk ? AXB[t.j].u : AX[t.j].u;
+    const Q = bk ? atB(t.j, t.s) : at(t.j, t.s);
     const e = across(u);
-    const hw = probeHW(t.j, t.s);
+    const hw = bk ? probeHWB(t.j, t.s) : probeHW(t.j, t.s);
     const r = hw + 4 / view.s;
     const e2 = Optics.cross(u, e); // 3D views: the plane across the beam, seen as a ring (a line from the side)
     g.line(

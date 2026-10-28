@@ -72,7 +72,8 @@
     const w = fitWave(rs, Q, u);
     const k =
       Math.sqrt(toPlane(rs, Q, u).reduce((a, r) => a + r.xy[0] ** 2 + r.xy[1] ** 2, 0) / rs.length) || 1;
-    if (!(Math.abs(w.R) < 1e6 * k)) return w; // collimated: nothing to move away from
+    if (!(Math.abs(w.R) < 1e3 * k)) return w; // (near-)collimated: nothing to move away from (and moving a nearly flat,
+    // aberrated wavefront 99 of its huge radii away would scatter its rays across one another)
     const D = 99 * Math.abs(w.R);
     const sg = Math.sign(w.R);
     const w2 = fitWave(rs, add(Q, u, -sg * D), u);
@@ -97,6 +98,9 @@
     let h0;
     let x0 = 0;
     let y0 = 0;
+    let flat = false; // a beam so nearly collimated that its apex runs off: its tilt fitted as tilt (tx, ty) instead
+    let tx = 0;
+    let ty = 0;
     // Fit h − (sphere − parabola) = a + bx + cy + e·r², then cv = 2e. The parabola's apex is free (the tilt terms move it), and
     // the sphere's correction is taken about that apex: an off-axis field's wavefront is a sphere about its own image point, and
     // measured about the axis instead it would leave a false coma.
@@ -109,37 +113,39 @@
       const c = lstsq(g);
       const e = c[3] / (k * k);
       cv = 2 * e;
-      if (e) {
-        const ax = -c[1] / k / (2 * e);
-        const ay = -c[2] / k / (2 * e);
-        if (Math.hypot(ax, ay) < 1e3 * k) [x0, y0] = [ax, ay];
-      }
-      h0 = c[0] - e * (x0 * x0 + y0 * y0);
+      const ax = e ? -c[1] / k / (2 * e) : Infinity;
+      const ay = e ? -c[2] / k / (2 * e) : Infinity;
+      flat = !(Math.hypot(ax, ay) < 1e3 * k);
+      if (flat) [x0, y0, tx, ty] = [0, 0, c[1] / k, c[2] / k];
+      else [x0, y0] = [ax, ay];
+      h0 = flat ? c[0] : c[0] - e * (x0 * x0 + y0 * y0);
     }
     // Then the exact best-fit sphere (Gauss–Newton from there, on apex height h0, apex x0, y0 and curvature cv): each ray's
     // error is taken along itself (n·cos to the axis: the wavefront's normal, which leans off axis for an oblique beam), and
     // the sum of their squares made least. The parabola-based start alone falls short for fast beams (NA ≳ 0.3).
     const wt = pl.map(r => r.n * dot(r.u, u));
     const res = ([a, x1, y1, c1]) =>
-      W.map(([x, y, h], i) => wt[i] * (h - a - sag(c1, 0, (x - x1) ** 2 + (y - y1) ** 2)));
-    let p = [h0, x0, y0, cv];
+      flat
+        ? W.map(([x, y, h], i) => wt[i] * (h - a - x1 * x - y1 * y - sag(c1, 0, x * x + y * y))) // (x1, y1: tilts)
+        : W.map(([x, y, h], i) => wt[i] * (h - a - sag(c1, 0, (x - x1) ** 2 + (y - y1) ** 2)));
+    let p = flat ? [h0, tx, ty, cv] : [h0, x0, y0, cv];
     let f = res(p);
     let ss = f.reduce((a, v) => a + v * v, 0);
     for (let it = 0; it < 20 && cv; it++) {
       const J = W.map(([x, y], i) => {
-        const dx = x - p[1];
-        const dy = y - p[2];
+        const dx = flat ? x : x - p[1];
+        const dy = flat ? y : y - p[2];
         const r2 = dx * dx + dy * dy;
         const S = Math.sqrt(Math.max(1e-300, 1 - p[3] * p[3] * r2));
         const ds = p[3] / (2 * S);
         return [
           -wt[i],
-          -wt[i] * ds * (-2 * dx),
-          -wt[i] * ds * (-2 * dy),
+          flat ? -wt[i] * x : -wt[i] * ds * (-2 * dx),
+          flat ? -wt[i] * y : -wt[i] * ds * (-2 * dy),
           -wt[i] * (r2 / (1 + S) + (p[3] * p[3] * r2 * r2) / (S * (1 + S) ** 2)),
         ];
       });
-      const sc = [1, k, k, 1 / (k * k)];
+      const sc = flat ? [1, 1 / k, 1 / k, 1 / (k * k)] : [1, k, k, 1 / (k * k)];
       const step = lstsq(J.map((row, i) => [row.map((v, m) => v * sc[m]), -f[i]])).map((v, m) => v * sc[m]); // (scaled columns)
       let t = 1;
       let q;
@@ -156,7 +162,7 @@
       [p, f, ss] = [q, fq, sq];
       if (done) break;
     }
-    [h0, x0, y0, cv] = p;
+    [h0, , , cv] = p;
     opd = f;
     return { R: 1 / cv + h0, opd }; // radius from the plane (the fitted apex sits h0 downstream of Q)
   }
@@ -240,16 +246,21 @@
     const u = j ? S[j - 1].uOut : [0, 0, 1];
     const l = dot(add(S[j].P, A, -1), u);
     const sel = bundle.filter(r => r.length > j + 1);
-    const rs = sel.map(r => r[j]);
+    const w = wavefrontAt(
+      sel.map(r => r[j]),
+      A,
+      u,
+      l,
+    );
+    return w && { ...w, pp: sel.map(r => r[0].p), kept: sel.length / bundle.length };
+  }
+  /** The wavefront of rays rs (states at the start of a stretch of beam: from A along u, l long), fitted at whichever end
+   *  the beam is wider (see wavefrontIn). */
+  function wavefrontAt(rs, A, u, l) {
     if (rs.length < 5) return null;
     const spread = s => spot(toPlane(rs, add(A, u, s), u).map(q => q.xy)).rms;
     const s0 = spread(0) >= spread(l) ? 0 : l;
-    return {
-      ...wavefront(rs, add(A, u, s0), u),
-      s0,
-      pp: sel.map(r => r[0].p),
-      kept: rs.length / bundle.length,
-    };
+    return { ...wavefront(rs, add(A, u, s0), u), s0 };
   }
 
   /** The focus of the beam arriving at surface i (0-based): where its paraxial on-axis beam converges or seems to diverge from,
@@ -337,63 +348,161 @@
     return [...out].sort((a, b) => a - b);
   }
 
-  /** Real images (conjugates) of a plane through the whole system: the pupil (i = −1) or the plane across the axis at surface
-   *  i (0-based). A paraxial ray leaving the plane's axis point is built from two traced rays (an axial ray and a small-field
-   *  chief ray, as combinations stay rays paraxially); wherever it crosses the axis again, in any axis segment, is an image
-   *  of the plane. Returns [{ j, s, m }]: s along segment j (0: pupil → S1; k: after surface k−1; S.length: past the last
-   *  surface), the lateral magnification m (unfolded sign convention: negative = inverted), and virtual. Real images are
-   *  those inside a segment; virtual ones are listed only in object space (segment 0, as seen from the source: e.g. a stop's
-   *  entrance pupil) and image space (past the last surface: e.g. the exit pupil). */
+  /** Transverse frames carried along the axis: per segment j (0: pupil → S1; k: after surface k−1; S.length: past the last
+   *  surface) its start p, direction u and axes [e1, e2] across it. A mirror reflects the axes (so they turn left-handed, as
+   *  an image seen in a mirror does: an unfolded view), any other surface turns them with the axis. Folds out of a plane
+   *  rotate a beam about its axis; these frames follow that, so a pair of them relates any two planes along the beam. */
+  function axisFrames(S) {
+    const fr = [
+      {
+        p: [0, 0, 0],
+        u: [0, 0, 1],
+        e: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    ];
+    for (let k = 0; k < S.length; k++) {
+      const { u: ui, e } = fr[k];
+      const uo = S[k].uOut;
+      let E;
+      if (S[k].mirror) {
+        const nv = unit(add(uo, ui, -1));
+        E = e.map(v => add(v, nv, -2 * dot(v, nv)));
+      } else {
+        const ax = cross(ui, uo);
+        const sn = Math.hypot(...ax);
+        const cs = dot(ui, uo);
+        E =
+          sn < 1e-15
+            ? e
+            : e.map(v => {
+                const kx = ax.map(c => c / sn); // Rodrigues: v turned by the angle from ui to uo about kx
+                return add(
+                  add(
+                    v.map(c => c * cs),
+                    cross(kx, v),
+                    sn,
+                  ),
+                  kx,
+                  dot(kx, v) * (1 - cs),
+                );
+              });
+      }
+      const e1 = unit(add(E[0], uo, -dot(E[0], uo)));
+      let e2 = add(E[1], uo, -dot(E[1], uo));
+      e2 = unit(add(e2, e1, -dot(e2, e1)));
+      fr.push({ p: S[k].P, u: uo, e: [e1, e2] });
+    }
+    return fr;
+  }
+
+  /** Images (conjugates) of a plane through the whole system: the pupil (i = −1) or the plane across the axis at surface i
+   *  (0-based). Paraxially, from four traced rays (pupil heights in x and y, small fields in x and y: combinations stay rays):
+   *  the rays leaving the plane's axis point form a two-parameter family, and in each axis segment their spread across the
+   *  axis is a 2×2 matrix linear in the distance s. Where it is singular the family meets in a line: a plane through tilted or
+   *  off-axis optics images to two line images (astigmatism), a stigmatic one to a point where both coincide. Each image is
+   *  reported at the middle of its pair: { j, s, m, virtual, astig: [s1, s2] (the two lines, when they differ) }, s along
+   *  segment j (0: pupil → S1; k: after surface k−1; S.length: past the last surface), m the lateral magnification (unfolded:
+   *  negative = inverted; |m| from the area scale, the sign from whether it turns over) and rot its rotation about the axis
+   *  in degrees (3D folds turn images; omitted when there is none). Real images are those inside a segment; virtual ones are
+   *  listed only in object space (segment 0, as seen from the source: e.g. a stop's entrance pupil) and image space (past
+   *  the last surface: e.g. the exit pupil). */
   function conjugates(S, i, a) {
     const h = 1e-4 * a;
     const ε = S.beam ? 1e-4 * Math.max(1, Math.abs(S.beam)) : 1e-3;
-    const A = trace(S, 0, h, 0);
-    const B = trace(S, 0, 0, ε);
-    const sA = start(0, h, 0, S.beam);
-    const sB = start(0, 0, ε, S.beam);
-    const seg = j => ({ p: j ? S[j - 1].P : [0, 0, 0], u: j ? S[j - 1].uOut : [0, 0, 1] });
-    const yt = (r, j) => {
-      const { p, u } = seg(j);
-      const [q] = toPlane([r], p, u);
-      const ey = [0, u[2], -u[1]];
-      return [q.xy[1], dot(r.u, ey) / dot(r.u, u)];
-    };
+    const ins = [
+      [h, 0, 0],
+      [0, h, 0],
+      [0, 0, [ε, 0]],
+      [0, 0, [0, ε]],
+    ];
+    const R = ins.map(([x, y, f]) => [start(x, y, f, S.beam), ...trace(S, x, y, f)]);
+    const F = axisFrames(S);
+    // the four rays at the start of segment j: heights [y1, y2] and slopes [t1, t2] in its frame (null if one is lost)
     const at = j => {
-      const ra = j ? A[j - 1] : sA;
-      const rb = j ? B[j - 1] : sB;
-      return ra && rb ? [yt(ra, j), yt(rb, j)] : null;
+      const { p, u, e } = F[j];
+      const g = R.map(r => {
+        const q = r[j];
+        if (!q) return null;
+        const cu = dot(q.u, u);
+        const d = add(q.p, p, -1);
+        const x = add(d, q.u, -dot(d, u) / cu);
+        return [e.map(v => dot(x, v)), e.map(v => dot(q.u, v) / cu)];
+      });
+      return g.every(Boolean) ? g : null;
     };
-    const src = at(i + 1);
-    if (!src) return [];
-    const [[ya0], [yb0]] = src;
+    const g0 = at(i + 1);
+    if (!g0) return [];
+    // the rays from the plane's axis point: c with Σ c_k y_k = 0 there, a 2D null space N (two 4-vectors)
+    const Y = g0.map(q => q[0]);
+    const det2 = m => m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    const A0 = [
+      [Y[0][0], Y[1][0]],
+      [Y[0][1], Y[1][1]],
+    ];
+    const dA = det2(A0);
+    if (!dA) return [];
+    const N = [
+      [1, 0],
+      [0, 1],
+    ].map(([c3, c4]) => {
+      const b = [0, 1].map(k => -(c3 * Y[2][k] + c4 * Y[3][k]));
+      return [(b[0] * A0[1][1] - A0[0][1] * b[1]) / dA, (A0[0][0] * b[1] - A0[1][0] * b[0]) / dA, c3, c4];
+    });
+    // a ray from an off-axis point of the plane, unit offset along each of its axes (least-norm c with Σ c_k y_k = δ)
+    const YYt = [0, 1].map(r => [0, 1].map(c => Y.reduce((t, y) => t + y[r] * y[c], 0)));
+    const dY = det2(YYt);
+    const P = [0, 1].map(k => {
+      const w = [k ? -YYt[0][1] / dY : YYt[1][1] / dY, k ? YYt[0][0] / dY : -YYt[1][0] / dY];
+      return Y.map(y => y[0] * w[0] + y[1] * w[1]);
+    });
+    const mix = (g, c, s) => [0, 1].map(k => g.reduce((t, q, r) => t + c[r] * (q[0][k] + s * q[1][k]), 0));
     const out = [];
-    const pts = [seg(i + 1).p];
+    const pts = [F[i + 1].p];
     const same = (p, q) => Math.hypot(...add(p, q, -1)) < 1e-6 * Math.max(1, a, Math.hypot(...p));
     for (let j = 0; j <= S.length; j++) {
       const g = at(j);
       if (!g) break;
-      const [[ya, ta], [yb, tb]] = g;
-      const Y = yb0 * ya - ya0 * yb;
-      const T = yb0 * ta - ya0 * tb; // the combination with no height at the plane
-      if (!T) continue;
-      const s = -Y / T;
-      const L = j < S.length ? dot(add(S[j].P, seg(j).p, -1), seg(j).u) : Infinity;
+      // det(M0 + s M1) = qa s² + qb s + qc, M(s) the axis point's rays' heights (columns: the null-space pair)
+      const M0 = N.map(c => mix(g, c, 0));
+      const M1 = N.map((c, k) => mix(g, c, 1).map((v, n) => v - M0[k][n]));
+      const qa = det2(M1);
+      const qc = det2(M0);
+      const qb = M0[0][0] * M1[1][1] + M1[0][0] * M0[1][1] - M0[0][1] * M1[1][0] - M1[0][1] * M0[1][0];
+      const n1 = Math.max(...M1.flat().map(Math.abs));
+      if (!(Math.abs(qa) > 1e-12 * n1 * n1)) continue; // one direction (or both) images at infinity
+      const s = -qb / (2 * qa);
+      const disc = qb * qb - 4 * qa * qc;
+      const half = Math.sqrt(Math.abs(disc)) / (2 * Math.abs(qa)); // half the gap between the line images
+      if (disc < 0 && half > 1e-3 * Math.max(1, Math.abs(s))) continue; // the rays twist past each other: no image
+      const L = j < S.length ? dot(add(S[j].P, F[j].p, -1), F[j].u) : Infinity;
       const real = s >= -1e-9 * (1 + Math.abs(L === Infinity ? s : L)) && s <= L * (1 + 1e-12); // inside this segment
-      if ((!real && !(j === S.length || (j === 0 && i >= 0))) || !(Math.abs(s) < 1e6 * Math.max(1, a)))
-        continue; // virtual: object or image space only; beyond 1e6 a: at infinity
+      if ((!real && !(j === S.length || (j === 0 && i >= 0))) || !(Math.abs(s) + half < 1e6 * Math.max(1, a)))
+        continue; // virtual: object or image space only; beyond 1e6 a (either line): at infinity
       const near = 1e-5 * Math.max(1, a, isFinite(L) ? Math.abs(L) : Math.abs(s));
       if ((j === i + 1 && Math.abs(s) < near) || (j === i && Math.abs(s - L) < near)) continue; // the plane itself, either side of it
-      // Each mirror crossed reverses this tool's transverse axis (ey = u × x); undo that so m has the usual unfolded sign.
-      const flips = S.slice(Math.min(i + 1, j), Math.max(i + 1, j)).filter(q => q.mirror).length;
-      const pt = add(seg(j).p, seg(j).u, s); // a virtual image only seen through plain planes is one already found
+      const pt = add(F[j].p, F[j].u, s); // a virtual image only seen through plain planes is one already found
       if (!real && pts.some(q => same(pt, q))) continue;
-      pts.push(pt);
-      out.push({
+      // magnification: where the off-axis points land, in this segment's (carried) frame
+      const Mm = P.map(c => mix(g, c, s)); // columns: the images of unit offsets along the plane's two axes
+      const dm = det2(Mm);
+      const tr = Mm[0][0] + Mm[1][1];
+      const rot = (Math.atan2(Mm[0][1] - Mm[1][0], tr) * 180) / Math.PI;
+      const flip = Math.abs(rot) > 90;
+      const c = {
         j,
         s,
         virtual: !real,
-        m: (flips % 2 ? -1 : 1) * (Math.abs(ya0) > Math.abs(yb0) ? (ya + s * ta) / ya0 : (yb + s * tb) / yb0),
-      });
+        m: (flip ? -1 : 1) * Math.sqrt(Math.abs(dm)),
+      };
+      if (same(pt, pts[0]) && Math.abs(c.m - 1) < 1e-6) continue; // the plane itself, through optics of no length
+      pts.push(pt);
+      const r = flip ? rot - Math.sign(rot) * 180 : rot;
+      if (Math.abs(r) > 0.05) c.rot = r;
+      if (half > 1e-6 * Math.max(1, a, Math.abs(s))) c.astig = disc < 0 ? [s, s] : [s - half, s + half];
+      out.push(c);
     }
     return out;
   }
@@ -415,11 +524,16 @@
    *  takes the path that wavelength takes through the same optics. */
   function atWavelength(S, rows, lam, lam0) {
     if (lam === lam0 || !dispersive(rows)) return S;
+    let nIn = S[0]?.nIn ?? 1; // (each surface's index before it too: a double pass goes back into it)
     const out = S.map((s, i) => {
       const r = rows[i + 1];
-      return s.mirror || !r.abbe ? s : { ...s, n: nAt(r.n, r.abbe, lam, lam0) };
+      if (s.mirror) return s; // (a mirror is the same surface)
+      const n = r.abbe ? nAt(r.n, r.abbe, lam, lam0) : s.n;
+      const q = n === s.n && nIn === s.nIn ? s : { ...s, n, nIn };
+      nIn = n;
+      return q;
     });
-    return Object.assign(out, { beam: S.beam, ap: S.ap });
+    return Object.assign(out, { beam: S.beam, ap: S.ap, dp: S.dp });
   }
 
   Object.assign(Optics, {
@@ -429,6 +543,7 @@
     axesAcross,
     lstsq,
     wavefront,
+    wavefrontAt,
     fitWave,
     curv,
     tangent,
@@ -441,6 +556,7 @@
     efl,
     pastEquator,
     conjugates,
+    axisFrames,
     nAt,
     dispersive,
     atWavelength,

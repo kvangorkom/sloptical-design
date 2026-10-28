@@ -3,7 +3,7 @@ function renderTable() {
   hideJog();
   hideLock();
   const num = (i, k, v) =>
-    `<td><input class="num" data-k="${k}" inputmode="decimal" autocomplete="off" value="${show(k, v)}"` +
+    `<td${k === 'f' ? ` title="${FTIP}"` : ''}><input class="num" data-k="${k}" inputmode="decimal" autocomplete="off" value="${show(k, v)}"` +
     ` aria-label="${k} of ${i ? 'S' + i : 'pupil'}"${k === 'ap' ? ' placeholder="auto"' : ''}>${k === 'tilt' ? '<span class="piv"></span>' : k === 'd' ? '<span class="piv oa"></span>' : ''}</td>`;
   const esc = s => s.replace(/[&"<]/g, c => `&#${c.charCodeAt(0)};`);
   $('tbl').innerHTML =
@@ -22,7 +22,7 @@ function renderTable() {
           `<tr data-i="${i}"><td class="idx" title="${i ? 'Pin footprint' : ''}">${i || ''}</td>` +
           (i
             ? `<td><input class="name" data-k="name" value="${esc(r.name)}" placeholder="S${i}" aria-label="Name of S${i}"></td>` +
-              `<td><select data-k="type" aria-label="Type of S${i}">${['refract', 'mirror'].map(t => `<option${t === r.type ? ' selected' : ''}>${t}</option>`)}</select></td>`
+              `<td><select data-k="type" aria-label="Type of S${i}">${TYPES.map(t => `<option${t === typeOf(r) ? ' selected' : ''}>${t}</option>`)}</select>${dpBox(r, i)}</td>`
             : `<td class="fixed">Entrance pupil</td><td><select data-k="beam" aria-label="Incoming beam" title="Incoming beam: collimated (fields in °) or from a focus (fields in mm)">` +
               ['collimated', 'focus']
                 .map(t => `<option${(t === 'focus') === !!r.R ? ' selected' : ''}>${t}</option>`)
@@ -34,7 +34,7 @@ function renderTable() {
               i || ['t', 'ap', 'R'].includes(k)
                 ? noIndex(k, r)
                   ? '<td class="na">—</td>'
-                  : num(i, k, r[k])
+                  : num(i, colKey(k, r), r[colKey(k, r)])
                 : '<td></td>',
             )
             .join('') +
@@ -52,9 +52,15 @@ function renderTable() {
     '</tbody>';
   markRow();
   renderConfigs();
+  if (VIEWER) [$('tbl'), $('cfgBar')].forEach(lockInputs);
 }
 
 const rowOf = el => sys.rows[el.closest('tr').dataset.i];
+/** The double-pass box, on the last row when it is a mirror: the light comes back off it through the system. */
+const dpBox = (r, i) =>
+  i === sys.rows.length - 1 && i > 1 && r.type === 'mirror'
+    ? `<label class="dp" title="Double pass: the light comes back off this mirror through every optic before it, to the pupil (drawn dashed; the popups' ⇄ shows the way back)"><input type="checkbox" data-k="dp"${r.dp ? ' checked' : ''}>2×</label>`
+    : '';
 $('tbl').oninput = ({ target: el }) => {
   const k = el.dataset.k;
   const r = rowOf(el);
@@ -63,8 +69,13 @@ $('tbl').oninput = ({ target: el }) => {
     else delete r.conj;
     return update();
   }
+  if (k === 'dp') {
+    if (el.checked) r.dp = true;
+    else delete r.dp;
+    return update();
+  }
   if (k === 'type') {
-    r.type = el.value;
+    setType(r, el.value);
     renderTable();
   } else if (k === 'beam') {
     setBeam(el.value === 'focus' ? -10 * r.ap : 0);
@@ -165,6 +176,7 @@ function reindex(at, dir) {
   pops().forEach(p => {
     const t = p.tgt;
     if (!t) return;
+    if (t.back && t.i === undefined) return closePop(p); // (a place on the way back: its segments are renumbered too)
     if (t.i !== undefined) {
       const v = move(t.i + 1);
       v === null ? closePop(p) : (t.i = v - 1);

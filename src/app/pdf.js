@@ -152,4 +152,57 @@ function pdfDoc(w, h, pen, title = 'Sloptical Design figure') {
   return Uint8Array.from(out, c => c.charCodeAt(0));
 }
 
-if (typeof module !== 'undefined') module.exports = { pdfPen, pdfDoc, pdfStr, pdfWidth };
+/** The same pen for SVG: what a figure draws, as SVG elements (points, y down), for pages and slides. */
+function svgPen() {
+  const els = [];
+  const n = v => +v.toFixed(3);
+  const esc = t =>
+    String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const d = (polys, close) =>
+    polys
+      .map(P => P.map((p, i) => `${i ? 'L' : 'M'}${n(p[0])} ${n(p[1])}`).join('') + (close ? 'Z' : ''))
+      .join('');
+  const op = (k, a) => (a < 1 ? ` ${k}="${+a.toFixed(2)}"` : '');
+  return {
+    els,
+    line(P, { color, width = 1, dash = [], alpha = 1 }) {
+      els.push(
+        `<path d="${d([P])}" fill="none" stroke="${color}" stroke-width="${n(width)}" stroke-linecap="round" stroke-linejoin="round"${dash.length ? ` stroke-dasharray="${dash.map(n).join(' ')}"` : ''}${op('stroke-opacity', alpha)}/>`,
+      );
+    },
+    segs(L, { color, width = 1, alpha = 1 }) {
+      if (L.length)
+        els.push(
+          `<path d="${d(L)}" fill="none" stroke="${color}" stroke-width="${n(width)}" stroke-linecap="round"${op('stroke-opacity', alpha)}/>`,
+        );
+    },
+    fill(polys, { color, alpha = 1, stroke, width = 1, strokeAlpha = 1 }) {
+      if (!polys.length) return;
+      els.push(`<path d="${d(polys, 1)}" fill="${color}"${op('fill-opacity', alpha)}/>`);
+      if (stroke)
+        els.push(
+          `<path d="${d(polys, 1)}" fill="none" stroke="${stroke}" stroke-width="${n(width)}" stroke-linejoin="round"${op('stroke-opacity', strokeAlpha)}/>`,
+        );
+    },
+    text(s, [x, y], { size, color, align = 'left', font }) {
+      const fam =
+        /serif|Times/i.test(font) && !/sans/i.test(font) ? 'Times, serif' : 'Helvetica, Arial, sans-serif';
+      const anchor = align === 'right' ? 'end' : align === 'center' ? 'middle' : 'start';
+      els.push(
+        `<text x="${n(x)}" y="${n(y)}" font-family="${fam}" font-size="${n(size)}" fill="${color}" text-anchor="${anchor}">${esc(s)}</text>`,
+      );
+    },
+    width: pdfWidth,
+  };
+}
+
+/** An SVG document of w × h points from an svgPen. */
+function svgDoc(w, h, pen, title = 'Sloptical Design figure') {
+  const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${+w.toFixed(3)} ${+h.toFixed(3)}" width="${+w.toFixed(3)}pt" height="${+h.toFixed(3)}pt">\n` +
+    `<title>${esc(title)}</title>\n<rect width="100%" height="100%" fill="#ffffff"/>\n${pen.els.join('\n')}\n</svg>\n`
+  );
+}
+
+if (typeof module !== 'undefined') module.exports = { pdfPen, pdfDoc, pdfStr, pdfWidth, svgPen, svgDoc };

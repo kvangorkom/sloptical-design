@@ -1,16 +1,18 @@
 // interchange.js — import and export: Zemax .zmx in and out, and batoid / optiland scripts out.
 
-/** Import a .zmx (Optics.fromZemax: a best-effort, absolute placement) as a new, unsaved system, then list what was dropped. */
-/** Import a .zmx (text) in plane 'yz' (OpticStudio's Cross-Section plane, the default) or 'xz', replacing the system, and
- *  show what was read. The dialog's Plane menu imports the same file again in the other plane. */
+/** Import a .zmx (text; Optics.fromZemax: a best-effort, absolute placement) as a new, unsaved system, and show what was
+ *  read and what was dropped. plane: 'auto' (the default: the plane the system lies in, its y–z or x–z, else 3D), 'yz'
+ *  (OpticStudio's Cross-Section plane), 'xz' or '3d'. The dialog's Plane menu and Keep dummy surfaces box import the same
+ *  file again. */
 let zin = null; // the last import: {txt, name}, for re-importing
-function importZmx(txt, name, plane = 'yz', flip = {}) {
+function importZmx(txt, name, plane = 'auto', flip = {}) {
   let im;
   try {
-    im = Optics.fromZemax(txt, { plane });
+    im = Optics.fromZemax(txt, { plane, keepDummies: $('zinDummy').checked });
   } catch (err) {
     return toast(`${name}: ${err.message ?? 'not a sequential Zemax file'}`);
   }
+  plane = im.plane; // (auto: the plane the system lies in, else 3D)
   const again = $('zinDlg').open; // the Plane / flip controls re-import into the same tab
   zin = { txt, name };
   if (again) commit();
@@ -25,6 +27,7 @@ function importZmx(txt, name, plane = 'yz', flip = {}) {
     rays: im.rays,
     grid: im.grid,
     rows: im.rows,
+    ...(im.configs && { configs: im.configs }), // (every configuration in the file: the saved one shown)
     shapes: [],
     ...((flip.lr || flip.ud) && { flip: { lr: !!flip.lr, ud: !!flip.ud } }),
   });
@@ -43,11 +46,11 @@ function importZmx(txt, name, plane = 'yz', flip = {}) {
   $('zinLR').checked = !!flip.lr;
   $('zinUD').checked = !!flip.ud;
   $('zinBody').innerHTML =
-    `<p>${im.rows.length - 1} surfaces from <b>${li(name).slice(4, -5)}</b>${im.name ? ` (${li(im.name).slice(4, -5)})` : ''}, placed at their absolute positions ${plane === '3d' ? 'in 3D' : `in the file's ${plane[0]}–z plane`}.</p>` +
+    `<p>${im.rows.length - 1} surfaces${im.configs ? ` in the saved configuration, ${im.configs.list[im.configs.active].name} (of ${im.configs.list.length}: switch with the strip in the surface panel or [ and ])` : ''} from <b>${li(name).slice(4, -5)}</b>${im.name ? ` (${li(im.name).slice(4, -5)})` : ''}, placed at their absolute positions ${plane === '3d' ? 'in 3D' : `in the file's ${plane[0]}–z plane`}.</p>` +
     hint +
     `<p>The pupil is at the entrance pupil, ${nf(Math.abs(P.t))} mm ${P.t >= 0 ? 'before' : 'after'} the first surface, semi-diameter ${nf(P.ap)} mm; ` +
     `${P.R ? `the beam comes from the object point ${nf(-P.R)} mm before it` : 'the beam is collimated'}. Fields ${im.fields.map(fl).join(', ')}, λ ${(im.lambdas ?? [im.lambda]).join(', ')} µm.</p>` +
-    `<p>Solves, apertures and dispersion are not imported (indices are at the d line).</p>` +
+    `<p>Solves and apertures are not imported; glasses are modelled by their index and Abbe number at the d line.</p>` +
     (im.warnings.length ? `<p>Also note:</p><ul>${im.warnings.map(li).join('')}</ul>` : '');
   if (!$('zinDlg').open) $('zinDlg').showModal();
 }
@@ -57,8 +60,9 @@ $('zmxFile').onchange = async e => {
   if (!f) return;
   importZmx(Optics.decodeText(new Uint8Array(await f.arrayBuffer())), f.name);
 };
-$('zinPlane').onchange = e =>
-  zin && importZmx(zin.txt, zin.name, e.target.value, { lr: $('zinLR').checked, ud: $('zinUD').checked });
+$('zinPlane').onchange = $('zinDummy').onchange = () =>
+  zin &&
+  importZmx(zin.txt, zin.name, $('zinPlane').value, { lr: $('zinLR').checked, ud: $('zinUD').checked });
 /** Flip the imported layout's drawing (one undo step each); the view is fitted again. */
 $('zinLR').onchange = $('zinUD').onchange = () => {
   commit();
@@ -108,28 +112,34 @@ function exportPy(lib) {
     () => toast(`Exported ${name}${which}${note}`),
   );
 }
-/** One .zmx; with configurations, a .zip of one .zmx per configuration (the active one also on the clipboard). */
+/** One .zmx; with configurations, one .zmx with them all in OpticStudio's multi-configuration editor (the active one the
+ *  saved configuration). Also on the clipboard. */
 function exportZmx() {
-  const zmx = (rows, ci) =>
-    Optics.zemax(rows, {
-      fields: sys.fields,
-      lambda: sys.lambda,
-      lambdas: sys.lambdas,
-      name: exportStem(ci),
-    });
-  const txt = zmx(sys.rows, sys.configs?.active);
+  const opts = { fields: sys.fields, lambda: sys.lambda, lambdas: sys.lambdas };
   const note = equatorNote('OpticStudio');
   if (sys.configs) {
     const C = sys.configs;
-    const files = C.list.map((c, ci) => ({
-      name: exportStem(ci) + '.zmx',
-      text: ci === C.active ? txt : zmx(Optics.solvedConfig(sys, ci), ci),
-    }));
-    const name = exportBase() + '_configs.zip';
-    download(name, new Blob([zipFiles(files)], { type: 'application/zip' }));
-    navigator.clipboard?.writeText(txt).catch(() => {});
-    return toast(`Exported ${name}: one .zmx for each of the ${C.list.length} configurations${note}`);
+    let out;
+    try {
+      out = Optics.zemaxConfigs(
+        C.list.map((c, ci) => ({
+          name: c.name,
+          rows: ci === C.active ? sys.rows : Optics.solvedConfig(sys, ci),
+        })),
+        { ...opts, name: exportBase(), active: C.active },
+      );
+    } catch (e) {
+      return toast(e.message);
+    }
+    const name = exportBase() + '.zmx';
+    download(name, new Blob([out.text], { type: 'text/plain' }));
+    navigator.clipboard?.writeText(out.text).catch(() => {});
+    const warn = out.warnings.length ? ` (${out.warnings.join('; ')})` : '';
+    return toast(
+      `Exported ${name}: the ${C.list.length} configurations in its multi-configuration editor${warn}${note}`,
+    );
   }
+  const txt = Optics.zemax(sys.rows, { ...opts, name: exportStem() });
   download(file.name.replace(/\.json$/, '') + '.zmx', new Blob([txt], { type: 'text/plain' }));
   navigator.clipboard?.writeText(txt).then(
     () => toast(`Exported the .zmx (also on the clipboard)${note}`),

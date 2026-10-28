@@ -1,5 +1,5 @@
 // solve-cells.js — solves (computed by the engine): row.solve[key] = {type, v}, re-applied in row order on every update.
-const SOLVE = { focus: 'Focus at next', collim: 'Collimate' };
+const SOLVE = { focus: 'Focus at next', collim: 'Collimate', centre: 'Centre next on focus' };
 const solveOpts = (ri, k) => Optics.solvesFor(sys.rows, ri, k);
 
 /** Refresh solved cells: value, corner marker, tooltip. */
@@ -45,7 +45,11 @@ function syncCells(root = $('tbl')) {
           ? cs
               .map(
                 c =>
-                  `${c.virtual ? 'virtually ' : ''}${nf(Math.abs(c.s))} mm ${c.s < 0 ? 'before' : 'after'} ${c.j ? label(c.j - 1) : 'the pupil'} (m ${nf(c.m)})`,
+                  `${c.virtual ? 'virtually ' : ''}${nf(Math.abs(c.s))} mm ${c.s < 0 ? 'before' : 'after'} ${c.j ? label(c.j - 1) : 'the pupil'}` +
+                  `${c.past ? ' (past the last surface: where the light would go on)' : ''} (m ${nf(c.m)}${c.rot ? `, turned ${nf(c.rot)}°` : ''})` +
+                  (c.astig
+                    ? `, astigmatic: line images ${c.astig.map(t => nf(t)).join(' and ')} mm (${nf(c.astig[1] - c.astig[0])} mm apart)`
+                    : ''),
               )
               .join('; ')
           : 'nowhere (the images are at infinity)');

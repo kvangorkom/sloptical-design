@@ -91,7 +91,10 @@
   const inFrame = (fx, fy, fz, L) => [0, 1, 2].map(i => fx[i] * L[0] + fy[i] * L[1] + fz[i] * L[2]);
 
   /** Carry the frame (fx, fy) from axis direction u to v: the smallest rotation taking u into v, about the surface's own
-   *  x (sx) when v = −u. A planar frame (fx = +x, u and v in y–z) stays exactly planar. Returns [fx, fy]. */
+   *  x (sx) when v = −u. Within a microradian of a retro-reflection (a caliball, a flat at normal incidence), the turn about
+   *  the surface's x first, then the small rest from −u to v: the smallest rotation's axis is round-off there, so two traces
+   *  of the same light (the tracer's and an import's) would carry the frame differently. A planar frame (fx = +x, u and v in
+   *  y–z) stays exactly planar. Returns [fx, fy]. */
   function carry(fx, fy, u, v, sx = fx) {
     if (fx[0] === 1 && fx[1] === 0 && fx[2] === 0 && u[0] === 0 && v[0] === 0)
       return [
@@ -101,14 +104,24 @@
     const k = cross(u, v);
     const s = Math.hypot(...k);
     const c = dot(u, v);
-    if (s < 1e-14) {
-      if (c > 0) return [fx, fy];
+    if (s < 1e-14 && c > 0) return [fx, fy];
+    if (s < 1e-6 && c < 0) {
       const a = unit(add(sx, u, -dot(sx, u)));
-      return [turn(fx, a, Math.PI), turn(fy, a, Math.PI)];
+      const back = [turn(fx, a, Math.PI), turn(fy, a, Math.PI)];
+      return s < 1e-14
+        ? back
+        : carry(
+            ...back,
+            u.map(x => -x),
+            v,
+            sx,
+          );
     }
     const a = k.map(x => x / s);
     const ang = Math.atan2(s, c);
-    return [turn(fx, a, ang), turn(fy, a, ang)];
+    const w = unit(v);
+    const y = unit(add(turn(fy, a, ang), w, -dot(turn(fy, a, ang), w))); // (kept orthonormal about v: round-off would
+    return [cross(y, w), y]; // otherwise grow from surface to surface over a long 3D train)
   }
 
   Object.assign(Optics, { dot, add, unit, rot, toL, toW, cross, turn, frameRot, euler, inFrame, carry });

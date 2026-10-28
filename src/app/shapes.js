@@ -1,6 +1,7 @@
 // shapes.js — shapes: rectangles, circles and lines sketched on the layout (world mm, fixed in place), drawn under everything with
 // their dimensions. sys.shapes: {type: 'rect', z, y, w, h, a} (centre, size, rotation in degrees CCW, default 0),
-// {type: 'circle', z, y, d}, {type: 'line', z, y, z2, y2}. A selected rectangle or line has a rotation handle (a round knob
+// {type: 'circle', z, y, d}, {type: 'line', z, y, z2, y2}. Scripts can add 3D envelopes too ({type: 'box' | 'cylinder'}, see
+// src/engine/shapes.js): drawn as their silhouette and edges from any side, with their name; not picked or edited here. A selected rectangle or line has a rotation handle (a round knob
 // off the middle of its lower edge, or beside a line's middle) that turns it about its centre; Shift turns in 15° steps.
 const SH = {
   /** A point at local (u along the width, v along the height) of a rectangle rotated by its angle about its centre. */
@@ -11,23 +12,27 @@ const SH = {
     return [0, sh.y + u * s + v * c, sh.z + u * c - v * s];
   },
   outline: sh =>
-    sh.type === 'rect'
-      ? [
-          [-1, -1],
-          [1, -1],
-          [1, 1],
-          [-1, 1],
-        ].map(([a, b]) => SH.at(sh, (a * sh.w) / 2, (b * sh.h) / 2))
-      : sh.type === 'circle'
-        ? Array.from({ length: 72 }, (_, i) => [
-            0,
-            sh.y + (sh.d / 2) * Math.sin((i * Math.PI) / 36),
-            sh.z + (sh.d / 2) * Math.cos((i * Math.PI) / 36),
-          ])
-        : [
-            [0, sh.y, sh.z],
-            [0, sh.y2, sh.z2],
-          ],
+    Optics.isSolid(sh)
+      ? (SH.wire(sh)?.pts ?? [])
+      : sh.type === 'rect'
+        ? [
+            [-1, -1],
+            [1, -1],
+            [1, 1],
+            [-1, 1],
+          ].map(([a, b]) => SH.at(sh, (a * sh.w) / 2, (b * sh.h) / 2))
+        : sh.type === 'circle'
+          ? Array.from({ length: 72 }, (_, i) => [
+              0,
+              sh.y + (sh.d / 2) * Math.sin((i * Math.PI) / 36),
+              sh.z + (sh.d / 2) * Math.cos((i * Math.PI) / 36),
+            ])
+          : [
+              [0, sh.y, sh.z],
+              [0, sh.y2, sh.z2],
+            ],
+  /** A solid (box, cylinder) in the configuration shown: { c, pts, edges } in the world, or null when it isn't shown. */
+  wire: sh => Optics.shapeWire(sh, sys.rows, S, sys.configs?.list?.[sys.configs.active]?.id ?? null),
   centre: sh => (sh.type === 'line' ? [0, (sh.y + sh.y2) / 2, (sh.z + sh.z2) / 2] : [0, sh.y, sh.z]),
   /** The rotation knob (world): 22 px out from the middle of a rectangle's edge, or beside a line's middle, on the side lower
    *  on the screen (the size labels sit on the upper side); null for a circle. */
@@ -57,7 +62,7 @@ const SH = {
     const v = -dz * Math.sin(t) + dy * Math.cos(t);
     return Math.abs(u) <= sh.w / 2 && Math.abs(v) <= sh.h / 2;
   },
-  name: { rect: 'Rectangle', circle: 'Circle', line: 'Line' },
+  name: { rect: 'Rectangle', circle: 'Circle', line: 'Line', box: 'Box', cylinder: 'Cylinder' },
 };
 /** Shapes with dimensions: a rectangle's width above it and height to its right, a circle's diameter, a line's length. */
 function drawShapes(g0, M, o, collect) {
@@ -67,9 +72,35 @@ function drawShapes(g0, M, o, collect) {
   const texts = []; // each text: its spots to choose from, the usual one first ([p, align])
   const lab = (t, ...spots) =>
     texts.push({ t, spots: spots.map(s => (Array.isArray(s[0]) ? s : [s, 'center'])) });
-  const outlines = sys.shapes.map(sh => SH.outline(sh).map(M));
+  const outlines = sys.shapes.map(sh =>
+    Optics.isSolid(sh) ? Optics.hull2(SH.outline(sh).map(M)) : SH.outline(sh).map(M),
+  );
   for (const [n, sh] of sys.shapes.entries()) {
     const P = outlines[n];
+    if (Optics.isSolid(sh)) {
+      // a 3D envelope: its silhouette, filled, then its edges and its name
+      if (P.length < 3) continue;
+      g.fill([P], {
+        color: roleFill(sh, o.shape),
+        stroke: roleLine(sh, o.shapeLine),
+        width: 0.7 * o.lw.optic,
+      });
+      for (const [a, b] of SH.wire(sh).edges)
+        g.line([M(a), M(b)], { color: roleLine(sh, o.shapeLine), width: 0.5 * o.lw.optic, alpha: 0.6 });
+      if (sh.name) {
+        const xs = P.map(p => p[0]);
+        const ys = P.map(p => p[1]);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+        const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+        lab(
+          sh.name,
+          [cx, cy + 0.35 * fs],
+          [cx, Math.min(...ys) - 0.4 * fs],
+          [cx, Math.max(...ys) + 1.1 * fs],
+        );
+      }
+      continue;
+    }
     const xs = P.map(p => p[0]);
     const ys = P.map(p => p[1]);
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
@@ -91,7 +122,7 @@ function drawShapes(g0, M, o, collect) {
       );
       continue;
     }
-    g.fill([P], { color: o.shape, stroke: o.shapeLine, width: 0.7 * o.lw.optic });
+    g.fill([P], { color: roleFill(sh, o.shape), stroke: roleLine(sh, o.shapeLine), width: 0.7 * o.lw.optic });
     if (sh.type === 'rect' && !sh.a) {
       const [X0, X1, Y0, Y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
       lab(
@@ -155,7 +186,9 @@ function drawShapes(g0, M, o, collect) {
   };
   const segsOf = (P, closed) =>
     (closed ? [...P, P[0]] : P).slice(1).map((q, k) => [(closed ? [...P, P[0]] : P)[k], q]);
-  const shapeSegs = sys.shapes.flatMap((sh, n) => segsOf(outlines[n], sh.type !== 'line'));
+  const shapeSegs = sys.shapes.flatMap((sh, n) =>
+    outlines[n].length > 1 ? segsOf(outlines[n], sh.type !== 'line') : [],
+  );
   const optSegs = o.place
     ? S.flatMap(s => segsOf((o.d3 ? [...(s.sl ?? []), ...rim3(s)] : s.prof).map(M), false))
     : [];
@@ -213,6 +246,7 @@ function pickShape(mx, my) {
   };
   for (let k = sys.shapes.length - 1; k >= 0; k--) {
     const sh = sys.shapes[k];
+    if (Optics.isSolid(sh)) continue; // (scripts' envelopes aren't edited here)
     const P = SH.outline(sh).map(X);
     const E = sh.type === 'line' ? P : [...P, P[0]];
     if (E.some((p, i) => i && seg(E[i - 1], p) <= 6)) return { k, part: 'body' };

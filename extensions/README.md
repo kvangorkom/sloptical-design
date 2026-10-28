@@ -42,7 +42,7 @@ A script defines:
   - `pupil_x`, `pupil_y`: where each ray crossed the pupil
 - **`name`, `system`:** the design's name (its file name) and the system JSON itself, as saved.
 - **`params`:** the current settings.
-- **`ctx.plane(segment, s, field, px, py)`** traces any ray from pupil point (px, py) of a field to any plane, returning `x, y, dx, dy, dz, index, L` (L is the optical path), or `None` if the ray is lost.
+- **`ctx.plane(segment, s, field, px, py)`** traces any ray from pupil point (px, py) of a field to any plane, returning `x, y, dx, dy, dz, index, L` (L is the optical path; the direction in the same x, y axes as the position), or `None` if the ray is lost. A field is a number (along y) or a pair `[x, y]`.
 - **`ctx.trace(field, px, py)`** returns the ray's world state after every surface (`p`, `u`, `n`, `L`).
 
 `run` returns a dict. Everything is optional:

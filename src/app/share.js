@@ -56,5 +56,6 @@ else {
       toast('That link doesn’t hold a design (it may be cut short)');
     }
   };
-  addEventListener('hashchange', () => openLink());
+  addEventListener('hashchange', () => (/^#v=/.test(location.hash) ? location.reload() : openLink())); // (a read-only link starts the page read-only)
+  window.shareBase = shareBase;
 }

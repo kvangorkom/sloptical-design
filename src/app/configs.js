@@ -160,7 +160,7 @@ $('cfgBar').onclick = e => {
 };
 $('cfgBar').ondblclick = e => {
   const b = e.target.closest('.cfgName');
-  if (!b) return;
+  if (!b || VIEWER) return;
   const ci = +b.closest('[data-ci]').dataset.ci;
   const c = sys.configs.list[ci];
   const inp = document.createElement('input');
@@ -306,7 +306,7 @@ function drawGhosts(g, M, o, list = ghosts, alpha = 0.4) {
         sel: new Set(),
         place: false,
         coneLayer: undefined,
-        range: L.range, // the figure's choice; on screen, all of it
+        range: L.range ?? viewSpan(L.k, L.S.length), // the figure's choice; on screen, Show ▸ Surfaces'
         under: undefined,
         others: undefined,
       });

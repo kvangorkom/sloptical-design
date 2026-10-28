@@ -493,6 +493,20 @@ main {
   padding: 0 4px;
   color: var(--mute);
 }
+/* a double pass: way out / way back */
+.popD {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: none;
+  font-size: 12px;
+  padding: 0 5px;
+  color: var(--mute);
+}
+.popD[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--panel);
+}
 /* Work area: the view plus the surface panel, docked below (default) or to the side, split by a draggable bar. */
 #work {
   flex: 1 1 auto;
@@ -764,6 +778,24 @@ section th {
 .popForm #lambda {
   width: 210px;
 }
+.popForm .span {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.popForm .span select {
+  max-width: 220px;
+}
+.popForm .span span {
+  white-space: nowrap;
+}
+#showBtn.span::after {
+  content: ' •';
+  color: var(--accent);
+} /* part of the system drawn (Show ▸ Draw from … to) */
 .popForm #rays,
 .popForm #grid {
   width: 70px;
@@ -1442,4 +1474,47 @@ textarea {
   width: 100%;
   height: 9em;
   box-sizing: border-box;
+}
+
+/* the double-pass box beside a last mirror's type */
+label.dp {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--mute);
+  white-space: nowrap;
+}
+
+/* A read-only page (viewer.js): the controls that would change the system, open or store designs are taken away */
+#roBadge {
+  font: 12px var(--ui);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 1px 8px;
+  margin-left: 4px;
+  white-space: nowrap;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.viewer
+  :is(#docName, #tabs, #exBtn, #exMenu, #focus, label:has(#stig), #stigMode, #drawM, #undo, #redo, #shapeBar),
+body.viewer
+  #fileMenu
+  :is([data-f='new'], [data-f='reverse'], [data-f='open'], [data-f='save'], [data-f='saveas']),
+body.viewer
+  #fileMenu
+  :is(
+    [data-f='link'],
+    [data-f='rolink'],
+    [data-f='watch'],
+    [data-f='viewer'],
+    [data-f='ext'],
+    [data-f='zin'],
+    hr:first-of-type
+  ) {
+  display: none !important;
 }
