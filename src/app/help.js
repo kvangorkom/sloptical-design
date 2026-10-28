@@ -134,7 +134,7 @@ function helpDialog(view = 'keys') {
     ],
     [
       'Shapes',
-      'sketch dimensioned rectangles, circles and lines under the layout; drag a selected one’s round knob to rotate it.',
+      'sketch dimensioned rectangles, circles and lines under the layout; drag a selected one’s round knob to rotate it. Scripts can add 3D envelopes, boxes and cylinders placed in the world or riding on a surface’s beam, per configuration (sys.shapes; see src/engine/shapes.js): drawn from any side, not edited here.',
     ],
     [
       'Configurations',

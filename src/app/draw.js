@@ -732,7 +732,8 @@ function placeLabels(g, M, o, D) {
       boxes.push([x, p[1] - 0.8 * fs, x + w, p[1] + 0.25 * fs]);
     }
     for (const sh of sys.shapes) {
-      const P = SH.outline(sh).map(M);
+      const P = Optics.isSolid(sh) ? Optics.hull2(SH.outline(sh).map(M)) : SH.outline(sh).map(M);
+      if (P.length < 2) continue;
       const E = sh.type === 'line' ? P : [...P, P[0]];
       for (let k = 1; k < E.length; k++) edges.push([E[k - 1], E[k]]);
     }
