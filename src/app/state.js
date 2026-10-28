@@ -3,6 +3,9 @@
 // The UI is a set of plain scripts loaded in order by index.html; they share their top-level names. All optics live in
 // the engine (src/engine, the global Optics); the UI edits, draws and hit-tests. Lengths in mm.
 
+/** A read-only page (File ▸ Export read-only page): the design and view it shows come in its own viewerData block, and
+ *  nothing in it can change the system (viewer.js). */
+const VIEWER = !!document.getElementById('viewerData') || /^#v=/.test(location.hash); // a read-only page or link (viewer.js)
 let tw = null; // the surface list's own window, when popped out
 const $ = id => document.getElementById(id) ?? tw?.document.getElementById(id);
 const cv = $('cv');
@@ -15,7 +18,7 @@ const onDoc = (type, fn) => {
 /** A setting kept in this browser: pref(k) reads it, pref(k, v) writes it (silently nothing where storage is blocked). */
 const pref = (k, v) => {
   try {
-    return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v);
+    return v === undefined ? localStorage.getItem(k) : VIEWER ? undefined : localStorage.setItem(k, v); // (a read-only page leaves the app's settings be)
   } catch {}
 };
 const mac = /Mac|iP/.test(navigator.platform);
@@ -73,8 +76,47 @@ const cols = () => {
   if (sys.lambdas) c.splice(c.findIndex(x => x[0] === 'n') + 1, 0, ABBE);
   return c;
 };
-const noIndex = (k, r) => (k === 'n' || k === 'abbe') && r.type === 'mirror'; // (a mirror keeps the index)
-const SPAN = { R: 100, k: 1, d: 10, tilt: 5, tiltY: 5, clock: 15, t: 50, n: 0.25, ap: 5, abbe: 20 }; // jog half-range when the value is 0 (else ±50 %)
+const noIndex = (k, r) =>
+  ((k === 'n' || k === 'abbe') && r.type === 'mirror') || (k === 'k' && r.type === 'paraxial'); // (a mirror keeps the index; an ideal lens has no conic)
+/** Surface types: refracting, mirror, and paraxial (an ideal thin lens of focal length f; see src/engine/trace.js). */
+const TYPES = ['refract', 'mirror', 'paraxial', 'caliball'];
+/** A row's type as the Type menu shows it: a caliball is a mirror with `ball`. */
+const typeOf = r => (r.ball ? 'caliball' : r.type);
+/** Change row r's type. A paraxial lens is flat, with no conic and no foci to pin; a surface becoming one starts as a
+ *  100 mm lens (a mirror's focal length, if it was a curved mirror). A caliball is a precision sphere, a convex mirror of
+ *  radius R (it starts as a 1″ ball, 12.7 mm), centred on the focus of the beam arriving (a solve on the distance before
+ *  it, which can be taken off to decentre or defocus it), so it sends the light straight back: last, it makes the system
+ *  a double pass. */
+function setType(r, ty) {
+  const was = typeOf(r);
+  const ri = sys.rows.indexOf(r);
+  if (was === 'caliball' && ty !== 'caliball') {
+    delete r.ball;
+    if (sys.rows[ri - 1]?.solve?.t?.type === 'centre') delete sys.rows[ri - 1].solve.t;
+  }
+  r.type = ty === 'caliball' ? 'mirror' : ty;
+  if (ty === 'paraxial' && was !== 'paraxial') {
+    r.f = r.f || (r.R && was === 'mirror' ? -r.R / 2 : 100);
+    Object.assign(r, { R: 0, k: 0, d: 0 }); // (centred on the beam)
+    delete r.oa;
+    delete r.lock;
+    if (r.solve) for (const k of ['R', 'k']) delete r.solve[k];
+  } else if (was === 'paraxial' && ty !== 'paraxial') delete r.f;
+  if (ty === 'caliball' && was !== 'caliball') {
+    Object.assign(r, { ball: true, R: r.R > 0 && r.R < 1e3 ? r.R : 12.7, k: 0, d: 0, tilt: 0 });
+    for (const k of ['oa', 'tiltY', 'clock', 'pivot', 'lock', 'solve']) delete r[k];
+    if (ri === sys.rows.length - 1) r.dp = true;
+    const pr = sys.rows[ri - 1];
+    if (ri > 1) {
+      pr.solve = { ...pr.solve, t: { type: 'centre' } };
+      Optics.unvary(sys.rows, ri - 1, 't');
+    }
+  }
+}
+/** The value a column edits in row r: a paraxial (ideal) lens's R column is its focal length. */
+const colKey = (k, r) => (k === 'R' && r?.type === 'paraxial' ? 'f' : k);
+const FTIP = 'Focal length (mm) of the ideal (paraxial) lens: + converging, − diverging; ∞ = no power';
+const SPAN = { R: 100, f: 100, k: 1, d: 10, tilt: 5, tiltY: 5, clock: 15, t: 50, n: 0.25, ap: 5, abbe: 20 }; // jog half-range when the value is 0 (else ±50 %)
 const span = (k, v) => Math.abs(v) / 2 || SPAN[k];
 const FIELD = ['#e8590c', '#1c7ed6', '#2f9e44', '#ae3ec9', '#f08c00', '#0c8599'];
 const fc = i => FIELD[i % FIELD.length];
@@ -107,7 +149,11 @@ const nf = v =>
         ? v.toExponential(2)
         : +v.toPrecision(4);
 const show = (k, v = 0) =>
-  k === 'R' && !v ? '∞' : (k === 'ap' || k === 'abbe') && !v ? '' : String(fmt(Math.abs(v) < 1e-12 ? 0 : v)); // solver round-off reads as 0
+  (k === 'R' || k === 'f') && !v
+    ? '∞'
+    : (k === 'ap' || k === 'abbe') && !v
+      ? ''
+      : String(fmt(Math.abs(v) < 1e-12 ? 0 : v)); // solver round-off reads as 0
 const parse = (k, s) => (
   (s = s.trim()),
   /^[+-]?(inf|∞)/i.test(s) || ((k === 'ap' || k === 'abbe') && !s) ? 0 : s && isFinite(+s) ? +s : null
@@ -146,11 +192,23 @@ let B = [];
 let BW = []; // other wavelengths: [{ l (µm), S, B }] (see layout())
 let C = [];
 let CJ = [];
+// A double pass (S.dp): the light back off the last mirror. AXB[k]: start and direction of return segment k (k = 0 leaves
+// the last mirror; segment k ends on S[n−2−k], the last on the pupil plane, at AXB.end); TB / BB: per field, the return of
+// each fan / grid ray, [state leaving the last mirror, ...after each surface on the way back, on the pupil plane], with its
+// pupil point (.pp). Null without a double pass.
+let AXB = null;
+let TB = null;
+let BB = null;
 let fails = new Set();
 let view = null;
 let ghosts = []; // layouts of the other configurations drawn (faded)
 let lk = null; // CJ: images of planes (images())   // lk: the open focus-lock popover {ri, anchor}
 const at = (j, s) => AX[j].p.map((v, k) => v + s * AX[j].u[k]); // point s along axis segment j
+const atB = (k, s) => AXB[k].p.map((v, m) => v + s * AXB[k].u[m]); // point s along return segment k
+const segB = k => {
+  const q = AXB[k + 1]?.p ?? AXB.end;
+  return q ? AXB[k].u.reduce((a, u, m) => a + u * (q[m] - AXB[k].p[m]), 0) : 0;
+}; // length of return segment k
 const seg = j => AX[j].u.reduce((a, u, k) => a + u * (S[j].P[k] - AX[j].p[k]), 0); // length of axis segment j
 
 function load(o, keepView) {
@@ -237,6 +295,7 @@ function layout() {
     } // which can lie across the meridian
     const m = Math.max(0.05 * (hi - lo), a / 20);
     [s.y0, s.y1] = s.ap ? [-s.ap, s.ap] : ys.length ? [lo - m, hi + m] : [-a / 20, a / 20];
+    if (s.ball) [s.y0, s.y1] = [-0.999 / Math.abs(s.c), 0.999 / Math.abs(s.c)]; // (a caliball: the whole ball, whatever meets it)
     s.prof = Optics.profile(s, s.y0, s.y1);
   });
   // other wavelengths (when some glass disperses): the same optics, each traced with that wavelength's indices
@@ -252,21 +311,41 @@ function layout() {
   C = sys.view === 'rays' ? [] : cones();
   AOIc = chiefAOI();
   CJ = images();
+  returns();
+}
+/** The way back of a double pass (see AXB, TB, BB), or none. */
+function returns() {
+  AXB = TB = BB = null;
+  if (!S.dp) return;
+  const n = S.length;
+  const back = rays =>
+    rays
+      .filter(r => r.length === n + 1)
+      .map(r => Object.assign([r[n], ...Optics.traceBack(S, r[n])], { pp: r[0].p }));
+  const ax = Optics.trace(S, 0, 0, 0);
+  if (ax.length < n) return;
+  const rb = [ax[n - 1], ...Optics.traceBack(S, ax[n - 1])];
+  AXB = Object.assign(
+    rb.slice(0, n).map(q => ({ p: q.p, u: q.u })),
+    { end: rb.length > n ? rb[n].p : null },
+  );
+  TB = T.map(back);
+  BB = B.map(back);
 }
 /** The globals layout() fills, for rows of another configuration: run fn with them in place (see layout()). */
 function withLayout(L, fn) {
-  const keep = { rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc };
-  ({ rows: sys.rows, S, AX, T, B, BW = [], C, CJ, AOIc } = L);
+  const keep = { rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc, AXB, TB, BB };
+  ({ rows: sys.rows, S, AX, T, B, BW = [], C, CJ, AOIc, AXB = null, TB = null, BB = null } = L);
   try {
     return fn();
   } finally {
-    ({ rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc } = keep);
+    ({ rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc, AXB, TB, BB } = keep);
   }
 }
 const layoutOf = rows =>
   withLayout({ rows, S, AX, T, B, BW, C, CJ, AOIc }, () => {
     layout();
-    return { rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc };
+    return { rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc, AXB, TB, BB };
   });
 
 let stigNote = ''; // shown after the update that refused an edit
@@ -303,7 +382,11 @@ function update() {
       renderWatch();
       placeWatch();
     }
-    pops().forEach(p => ((p.tgt?.i ?? p.tgt?.j) >= S.length ? closePop(p) : p.tgt && renderPop(p)));
+    pops().forEach(p =>
+      (p.tgt?.i ?? p.tgt?.j) >= S.length || (p.tgt?.back && p.tgt.i === undefined && !AXB?.[p.tgt.j])
+        ? closePop(p)
+        : p.tgt && renderPop(p),
+    ); // (a place on the way back closes when the double pass goes)
     syncCells();
     syncShapeBar();
     if ($('json').ownerDocument.activeElement !== $('json')) $('json').value = JSON.stringify(sys, null, 1);

@@ -104,7 +104,8 @@ const across = u => {
 };
 
 /** The images of every plane whose Images box is ticked (Optics.conjugates; real, plus virtual ones in object and image space): per image its row, the point on the axis,
- *  the half-extent across it (the beam's half-width at the plane, times |m|) and the magnification. */
+ *  the half-extent across it (the beam's half-width at the plane, times |m|) and the magnification; for an astigmatic one,
+ *  the points of its two line images (lines); past: beyond the last surface, where the light never gets (an exit pupil, say). */
 function images() {
   const a = sys.rows[0].ap;
   return sys.rows.flatMap((r, ri) =>
@@ -114,7 +115,9 @@ function images() {
           const A = AX[c.j];
           const p = A.p.map((v, k) => v + c.s * A.u[k]);
           const h0 = ri ? Math.max(probeHW(ri, 0), a / 20) : a;
-          return { ...c, ri, p, e: [0, A.u[2], -A.u[1]], u: A.u, half: Math.abs(c.m) * h0 };
+          const lines = c.astig?.map(t => A.p.map((v, k) => v + t * A.u[k]));
+          const past = c.j === S.length && !c.virtual;
+          return { ...c, ri, p, lines, past, e: [0, A.u[2], -A.u[1]], u: A.u, half: Math.abs(c.m) * h0 };
         }),
   );
 }

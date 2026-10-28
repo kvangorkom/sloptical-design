@@ -108,7 +108,9 @@
     }
     const a = k.map(x => x / s);
     const ang = Math.atan2(s, c);
-    return [turn(fx, a, ang), turn(fy, a, ang)];
+    const w = unit(v);
+    const y = unit(add(turn(fy, a, ang), w, -dot(turn(fy, a, ang), w))); // (kept orthonormal about v: round-off would
+    return [cross(y, w), y]; // otherwise grow from surface to surface over a long 3D train)
   }
 
   Object.assign(Optics, { dot, add, unit, rot, toL, toW, cross, turn, frameRot, euler, inFrame, carry });

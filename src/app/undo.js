@@ -15,6 +15,7 @@ function record(json) {
   $('redo').disabled = !hist.redo.length;
 }
 function commit() {
+  if (VIEWER) return;
   clearTimeout(hist.t);
   const j = JSON.stringify(sys);
   if (j !== hist.cur) {

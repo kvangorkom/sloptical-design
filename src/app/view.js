@@ -14,14 +14,17 @@ const X = p =>
 const viewDir = () => F3(View3D.camBack(cam)); // world direction toward the viewer
 
 /** Everything drawn, as world points (for fitting the view). */
-const drawn = () => [
-  ...T.flat().flatMap(r => r.map(q => q.p)),
-  ...S.flatMap(s => s.prof),
-  ...sys.fields.flatMap(src),
-  ...sys.shapes.flatMap(SH.outline),
-  ...CJ.map(c => c.p),
-  ...(look3() ? S.flatMap(s => rim3(s)) : []),
-];
+const drawn = () => {
+  const D = drawRange(viewSpan()); // (Show ▸ Surfaces: those drawn)
+  const Sr = S.filter((_, i) => D.inR(i));
+  return [
+    ...sys.fields.flatMap((f, j) => T[j].flatMap(r => D.ray(f, r))),
+    ...Sr.flatMap(s => s.prof),
+    ...sys.shapes.flatMap(SH.outline),
+    ...CJ.filter(D.conj).map(c => c.p),
+    ...(look3() ? Sr.flatMap(s => rim3(s)) : []),
+  ];
+};
 function fit(P = drawn(), k = 0.88, c = cam) {
   view = fitted(P, k, c);
 }

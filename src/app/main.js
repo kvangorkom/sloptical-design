@@ -40,24 +40,28 @@ matchMedia('(prefers-color-scheme: dark)').onchange = () => {
 themeIcon();
 dock(pref('optic_dock') === 'side' ? 'side' : 'bottom');
 syncCam();
-restoreDocs();
-hostReady();
-/** Extensions built into the page: the hosted build (build.js) embeds some as script blocks of type text/x-python with a
- *  data-ext attribute naming the file. They are always the page's own version; their settings are remembered like any other's. */
-const bundled = Object.fromEntries(
-  [...document.querySelectorAll('script[type="text/x-python"][data-ext]')].map(sc => [
-    sc.dataset.ext,
-    sc.textContent.replace(/^\n/, ''),
-  ]),
-);
-syncFolder(bundled, 'bundle');
-if (!Object.keys(bundled).length) scanExtensions(); // the extensions folder, when served (the hosted build has none)
-{
-  const w = new URLSearchParams(location.search).get('watch');
-  if (w) {
-    fresh();
-    Object.assign(file, { name: w.split('/').pop(), handle: null });
-    watch(true, w);
+if (VIEWER)
+  viewerBoot(); // a read-only page (viewer.js): its own design, nothing restored, loaded or stored
+else {
+  restoreDocs();
+  hostReady();
+  /** Extensions built into the page: the hosted build (build.js) embeds some as script blocks of type text/x-python with a
+   *  data-ext attribute naming the file. They are always the page's own version; their settings are remembered like any other's. */
+  const bundled = Object.fromEntries(
+    [...document.querySelectorAll('script[type="text/x-python"][data-ext]')].map(sc => [
+      sc.dataset.ext,
+      sc.textContent.replace(/^\n/, ''),
+    ]),
+  );
+  syncFolder(bundled, 'bundle');
+  if (!Object.keys(bundled).length) scanExtensions(); // the extensions folder, when served (the hosted build has none)
+  {
+    const w = new URLSearchParams(location.search).get('watch');
+    if (w) {
+      fresh();
+      Object.assign(file, { name: w.split('/').pop(), handle: null });
+      watch(true, w);
+    }
   }
+  openLink(); // a link with a design in it (share.js)
 }
-openLink(); // a link with a design in it (share.js)

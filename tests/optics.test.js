@@ -619,8 +619,9 @@ describe('solves (focus and collimate)', () => {
     near(R[2].tilt, -2 * deg(Math.atan(0.15)), 1e-6, 'collimating tilt of an OAP');
   });
 
-  test('only focus and collimate are offered; a solve with no solution fails and leaves the value; re-solving is bit-stable', () => {
-    assert.deepEqual(O.solvesFor(singlet(), 1, 't'), ['focus', 'collim']);
+  test('focus and collimate are offered (and, before a curved surface, centring it on the focus); a solve with no solution fails and leaves the value; re-solving is bit-stable', () => {
+    assert.deepEqual(O.solvesFor(singlet(), 1, 't'), ['focus', 'collim', 'centre']);
+    assert.deepEqual(O.solvesFor(singlet(), 2, 't'), ['focus', 'collim']);
     assert.deepEqual(O.solvesFor(singlet(), 3, 'R'), ['collim']);
     const R = [{ t: 10, ap: 10 }, surf({ t: 100, solve: { t: { type: 'focus' } } }), surf()];
     assert.ok(O.applySolves(R).has('1t'));
@@ -1528,7 +1529,7 @@ describe('Zemax import (fromZemax)', () => {
           ['DISZ INFINITY'],
           ['STOP', 'DISZ 10'],
           ['TYPE COORDBRK', 'PARM 1 2', 'DISZ 0'],
-          ['TYPE PARAXIAL', 'GLAS MYGLASS 0 0', 'DISZ 5'],
+          ['TYPE GRATING', 'GLAS MYGLASS 0 0', 'DISZ 5'],
           ['DISZ 10'],
           [],
         ],
@@ -1538,7 +1539,7 @@ describe('Zemax import (fromZemax)', () => {
     assert.ok(
       im.warnings.some(w => /3 configurations/.test(w)) &&
         im.warnings.some(w => /MYGLASS/.test(w)) &&
-        im.warnings.some(w => /PARAXIAL/.test(w)) &&
+        im.warnings.some(w => /GRATING/.test(w)) &&
         im.warnings.some(w => /out of the y–z plane/.test(w)),
     );
     assert.throws(() => O.fromZemax('VERS 1\r\nMODE SEQ'), /no surfaces/);
@@ -1702,6 +1703,44 @@ describe('images of planes (conjugates)', () => {
     assert.equal(c.j, 0);
     assert.equal(c.virtual, true);
     near(c.s, -im.rows[0].t, 1e-3);
+  });
+  test('3D: the second OAP of a relay clocked out of the plane still images the pupil 2f − d after it (m = −1), where real rays from a pupil point meet again', () => {
+    const rows = [
+      { t: 300, ap: 25 },
+      mirror({ R: -1000, k: -1, d: 150, t: 511.25 }),
+      surf({ t: 511.25 }),
+      mirror({ R: -1000, k: -1, d: 150, clock: 90, t: 400 }),
+      surf(),
+    ];
+    const S = O.build(rows);
+    assert.ok(Math.abs(S[2].uOut[0]) > 0.2, 'out of the y–z plane');
+    const cs = O.conjugates(S, -1, 25);
+    assert.equal(cs.length, 1);
+    const [c] = cs;
+    assert.equal(c.j, 4);
+    near(c.s, 2 * 511.25 - 300 - 400, 0.01);
+    near(c.m, -1, 1e-5);
+    // ground truth: rays leaving pupil point (1, 0.5) in different directions cross again at that distance
+    const P = O.add(S[3].P, S[3].uOut, c.s);
+    const ends = [-0.001, 0.001].flatMap(a => [-0.001, 0.001].map(b => O.trace(S, 1, 0.5, [a, b])[3]));
+    const xy = O.toPlane(ends, P, S[3].uOut).map(q => q.xy);
+    for (const q of xy) near(Math.hypot(q[0] - xy[0][0], q[1] - xy[0][1]), 0, 1e-4);
+    near(Math.hypot(...xy[0]), Math.hypot(1, 0.5), 1e-3, 'the point’s image, as far off the axis');
+  });
+  test('folds out of the plane (a periscope): the lens’s 2f image of the pupil is found along the folded axis', () => {
+    const rows = [
+      { t: 200, ap: 10 },
+      surf({ type: 'paraxial', f: 100, t: 60 }),
+      mirror({ tilt: 45, t: 60 }),
+      mirror({ tiltY: 45, t: 120 }),
+      surf(),
+    ];
+    const cs = O.conjugates(O.build(rows), -1, 10);
+    assert.equal(cs.length, 1);
+    assert.equal(cs[0].j, 3, 'after the second fold');
+    near(60 + 60 + cs[0].s, 200, 1e-6);
+    near(cs[0].m, -1, 1e-6);
+    assert.equal(cs[0].astig, undefined, 'stigmatic');
   });
   test('a classical Cassegrain’s exit pupil is virtual, in image space before the focal plane; no duplicates through plain planes', () => {
     const cs = O.conjugates(O.build(cassegrain()), -1, 100);

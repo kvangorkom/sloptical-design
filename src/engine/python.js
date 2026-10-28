@@ -13,6 +13,8 @@
    *  Run as a script, each prints the spot of every field on the last surface. */
   function toPython(rows, lib, { fields = [0], lambda = 0.55, name = 'Sloptical Design' } = {}) {
     const S = build(rows);
+    if (S.some(s => s.para))
+      throw Error(`this design has a paraxial (ideal) lens, which ${lib} doesn't model: export it for Zemax`);
     const py = v => {
       if (!isFinite(v)) throw Error('the layout has a surface the axis ray misses; fix it before exporting');
       return String(+v.toPrecision(15));

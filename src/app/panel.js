@@ -1,6 +1,6 @@
 // panel.js — the surface panel: docked at the bottom or the side (resizable), or in its own window.
 $('stig').checked = pref('optic_stig') !== 'off';
-setTimeout(() => showWatch(pref('optic_watch') === 'on')); // (after the first layout)
+setTimeout(() => VIEWER || showWatch(pref('optic_watch') === 'on')); // (after the first layout; a read-only page shows it as exported)
 $('stigMode').value = pref('optic_stigmode') === 'hold' ? 'hold' : 'follow'; // (images follow the mirrors unless chosen otherwise)
 $('stigMode').hidden = !$('stig').checked;
 $('stig').onchange = e => {

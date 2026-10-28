@@ -88,6 +88,34 @@ $('full').onchange = e => {
   sys.full = e.target.checked;
   update();
 };
+/** Show ▸ Draw from … to: the choices over the shown configuration's surfaces, set to its range (viewSpan). */
+function renderSpan() {
+  const opt = (v, t) => `<option value="${v}">${t.replace(/[&<]/g, c => `&#${c.charCodeAt(0)};`)}</option>`;
+  $('spanFrom').innerHTML =
+    opt(-1, 'the pupil (start)') + S.map((_, i) => opt(i, `${i + 1} · ${label(i)}`)).join('');
+  $('spanTo').innerHTML = S.map((_, i) =>
+    opt(i === S.length - 1 ? -1 : i, `${i + 1} · ${label(i)}${i === S.length - 1 ? ' (last)' : ''}`),
+  ).join('');
+  const r = viewSpan() ?? [-1, -1];
+  $('spanFrom').value = r[0];
+  $('spanTo').value = r[1] === S.length - 1 ? -1 : r[1];
+}
+$('showBtn').addEventListener('click', renderSpan);
+$('spanFrom').onchange = $('spanTo').onchange = () => {
+  let [a, b] = [+$('spanFrom').value, +$('spanTo').value];
+  if (b >= 0 && b < a) $('spanTo').value = b = a; // (the last never before the first)
+  const all = a < 0 && b < 0;
+  if (sys.configs) {
+    const id = sys.configs.list[sys.configs.active].id;
+    sys.span = typeof sys.span === 'object' && !Array.isArray(sys.span) ? { ...sys.span } : {};
+    if (all) delete sys.span[id];
+    else sys.span[id] = [a, b];
+    if (!Object.keys(sys.span).length) delete sys.span;
+  } else if (all) delete sys.span;
+  else sys.span = [a, b];
+  view = null; // fitted to what is drawn now
+  update();
+};
 $('aoiT').onchange = e => {
   sys.aoi = e.target.checked;
   update();

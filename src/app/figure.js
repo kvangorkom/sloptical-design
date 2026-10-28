@@ -372,13 +372,23 @@ function figureDialog() {
   const C = sys.configs;
   const ns = C ? C.list.map((_, k) => (k === C.active ? S : layoutFor(k).S).length) : [S.length];
   const ok = ([a, b], n) => a >= -1 && a < n && b >= -1 && b < n - 1;
-  // the ranges belong to one design (its configurations and their surfaces): another starts from all of it
+  // the ranges belong to one design (its configurations and their surfaces): another starts afresh
   const design = `${file.name}:${C ? C.list.map((c, k) => `${c.id}=${ns[k]}`).join() : ns[0]}`;
   if (
     fig.design !== design ||
     (C ? C.list.some((c, k) => !ok(fig.ranges?.[c.id] ?? [-1, -1], ns[k])) : !ok([fig.from, fig.to], ns[0]))
-  )
-    Object.assign(fig, { from: -1, to: -1, ranges: {}, design, edits: {}, moves: {}, cfgs: null });
+  ) {
+    const vs = viewSpan(); // (a new design's figure starts from what the view draws: Show ▸ Draw from … to)
+    Object.assign(fig, {
+      from: vs?.[0] ?? -1,
+      to: vs && vs[1] < S.length - 1 ? vs[1] : -1,
+      ranges: C && sys.span && !Array.isArray(sys.span) ? structuredClone(sys.span) : {},
+      design,
+      edits: {},
+      moves: {},
+      cfgs: null,
+    });
+  }
   fig.ranges ??= {};
   $('pFrom').innerHTML = fromOpts();
   $('pTo').innerHTML = toOpts();

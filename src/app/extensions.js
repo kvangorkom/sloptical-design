@@ -23,11 +23,11 @@ const PYBOOT = [
   '    """The popup\'s context: a dict of data plus ray-trace helpers (see extensions/README.md in Sloptical Design)."""',
   '    def trace(self, field, px, py):',
   '        """States of the ray from pupil point (px, py) of the field, one per surface reached: dicts p, u (world), n, L."""',
-  '        return json.loads(self._js.trace(field, px, py))',
+  '        return json.loads(self._js.trace(json.dumps(field) if isinstance(field, (list, tuple)) else field, px, py))',
   '    def plane(self, segment, s, field, px, py):',
   '        """The ray on the plane s mm along axis segment `segment` (0: pupil to the first surface; k: after surface k-1),',
   '        perpendicular to the axis: x, y (mm from the axis point), dx, dy, dz (direction cosines there), index, L. None if lost."""',
-  '        return json.loads(self._js.plane(segment, s, field, px, py))',
+  '        return json.loads(self._js.plane(segment, s, json.dumps(field) if isinstance(field, (list, tuple)) else field, px, py))',
   'def _clean(o):',
   '    if hasattr(o, "tolist"): o = o.tolist()',
   '    if isinstance(o, float): return o if math.isfinite(o) else None',
@@ -54,17 +54,28 @@ function pyWorker() {
     }
     return lay;
   };
-  /** ctx.trace and ctx.plane, on the design's own surfaces (the same engine as the page's). */
+  /** A plane's axes across the beam, as Optics.toPlane measures x and y (3D: Optics.axesAcross), so directions there are in
+   *  the same frame as positions. */
+  const axes = u =>
+    Optics.axesAcross(u) ?? [
+      [1, 0, 0],
+      [0, u[2], -u[1]],
+    ];
+  /** ctx.trace and ctx.plane, on the design's own surfaces (the same engine as the page's). A field may come as JSON (a pair
+   *  [x, y] from Python). */
   const helpers = rows => {
     const { S, AX } = layout(rows);
-    const ray = (f, px, py_) => [Optics.start(px, py_, f, S.beam), ...Optics.trace(S, px, py_, f)];
+    const ray = (f, px, py_) => {
+      if (typeof f === 'string') f = JSON.parse(f);
+      return [Optics.start(px, py_, f, S.beam), ...Optics.trace(S, px, py_, f)];
+    };
     return {
       trace: (f, px, py_) => JSON.stringify(ray(f, px, py_).map(q => ({ p: q.p, u: q.u, n: q.n, L: q.L }))),
       plane: (j, s, f, px, py_) => {
         const r = ray(f, px, py_);
         if (r.length <= j) return 'null';
         const u = AX[j].u;
-        const ey = [0, u[2], -u[1]];
+        const [ex, ey] = axes(u);
         const [q] = Optics.toPlane(
           [r[j]],
           AX[j].p.map((v, k) => v + s * u[k]),
@@ -74,9 +85,9 @@ function pyWorker() {
         return JSON.stringify({
           x: q.xy[0],
           y: q.xy[1],
-          dx: d[0],
-          dy: d[1] * ey[1] + d[2] * ey[2],
-          dz: d[0] * u[0] + d[1] * u[1] + d[2] * u[2],
+          dx: Optics.dot(d, ex),
+          dy: Optics.dot(d, ey),
+          dz: Optics.dot(d, u),
           index: q.n,
           L: q.L,
         });
@@ -526,7 +537,10 @@ function extCtx(e, tg) {
   if (!tg) return { ...ctx, target: { kind: 'export' } }; // an export: the whole system, no plane
   const { surf, i, j, s } = tg;
   const u = AX[j].u;
-  const ey = [0, u[2], -u[1]];
+  const [ex, ey] = Optics.axesAcross(u) ?? [
+    [1, 0, 0],
+    [0, u[2], -u[1]],
+  ]; // (the plane's x and y, as toPlane measures them)
   const Q = at(j, s);
   return {
     ...ctx,
@@ -553,9 +567,9 @@ function extCtx(e, tg) {
         pupil_y: rs.map(r => r[0].p[1]),
         x: pl.map(q => q.xy[0]),
         y: pl.map(q => q.xy[1]),
-        dx: pl.map(q => q.u[0]),
-        dy: pl.map(q => q.u[1] * ey[1] + q.u[2] * ey[2]),
-        dz: pl.map(q => q.u[1] * u[1] + q.u[2] * u[2]),
+        dx: pl.map(q => Optics.dot(q.u, ex)),
+        dy: pl.map(q => Optics.dot(q.u, ey)),
+        dz: pl.map(q => Optics.dot(q.u, u)),
       };
     }),
   };

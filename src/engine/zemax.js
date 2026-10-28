@@ -1,9 +1,28 @@
-// zemax.js — Zemax OpticStudio interchange: export a .zmx lens file, and best-effort import of one.
+// zemax.js — Zemax OpticStudio interchange: export a .zmx lens file, and best-effort import of one. Also a system reversed
+// (reverseSystem), which places surfaces absolutely as the import does.
 
 (function engineZemax(Optics) {
   if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineZemax)); // (extensions' worker rebuilds the engine from these)
   ('use strict');
-  const { add, carry, cross, dot, euler, turn, unit, angleAt, build, grid, hit, angle, efl, secant } = Optics;
+  const {
+    add,
+    carry,
+    cross,
+    dot,
+    euler,
+    turn,
+    unit,
+    angleAt,
+    build,
+    grid,
+    hit,
+    angle,
+    efl,
+    secant,
+    trace,
+    start,
+    inFocus,
+  } = Optics;
 
   /** Zemax OpticStudio sequential lens file (.zmx) for the current geometry: surfaces, conics, spacings, glasses, fields,
    *  wavelength and entrance pupil. A beam from a focus becomes a finite object (thickness −R; negative, i.e. virtual,
@@ -29,10 +48,11 @@
       ...S.map((s, i, _, g = σ, __ = s.mirror && (σ = -σ)) => ({
         V: s.V,
         ez: s.ez.map(v => g * v),
+        type: s.para ? 'PARAXIAL' : 'STANDARD',
         lines: [
           `COMM ${(s.name || 'S' + (i + 1)).replace(/\s+/g, '_')}`,
           `CURV ${E(g * s.c)}`,
-          `CONI ${E(s.k)}`,
+          ...(s.para ? [`PARM 1 ${E(s.f)}`, 'PARM 2 1'] : [`CONI ${E(s.k)}`]), // (an ideal lens: focal length, OPD by integration)
           ...(s.mirror
             ? ['GLAS MIRROR 0 0 1.5 40 0 0 0 0 0 0']
             : s.nOut !== 1
@@ -72,7 +92,7 @@
         const N = F3[i + 1] ?? A;
         const q = add(N.V, A.V, -1);
         const ε = 1e-9;
-        surf('STANDARD', [...F.lines, `DISZ ${E(dot(q, A.Z))}`]);
+        surf(F.type ?? 'STANDARD', [...F.lines, `DISZ ${E(dot(q, A.Z))}`]);
         const [t, y, k] = euler([A.X, A.Y, A.Z].map(a => [N.X, N.Y, N.Z].map(b => dot(a, b))));
         const dx = dot(q, A.X);
         const dy = dot(q, A.Y); // Zemax: right-handed, so tilt x = −(this tool's tilt)
@@ -97,7 +117,7 @@
         const [dyN, dzN] = yz(N.ez);
         const turn = ((angle(N.ez) - angle(F.ez) + 540) % 360) - 180;
         const after = Math.abs(dyF) > ε && Math.abs(dyN) < ε; // tilt first, then travel along the new axis
-        surf('STANDARD', [...F.lines, `DISZ ${E(after ? 0 : dzF)}`]);
+        surf(F.type ?? 'STANDARD', [...F.lines, `DISZ ${E(after ? 0 : dzF)}`]);
         if (after) cb(0, turn, 1, dzN);
         else if (Math.abs(dyF) > ε || Math.abs(turn) > ε) cb(dyF, turn, 0, 0);
       });
@@ -110,7 +130,7 @@
       `ENPD ${E(2 * rows[0].ap)}`,
       'GCAT SCHOTT',
       'RAIM 0 0 1 1 0 0 0 0 0',
-      `FTYP ${rows[0].R ? 1 : 0} 0 ${fields.length} 1 0 0 0`,
+      `FTYP ${rows[0].R ? 1 : 0} 0 ${fields.length} ${waves.length} 0 0 0`,
       `XFLN ${fields.map(f => (Array.isArray(f) ? f[0] : 0)).join(' ')}`,
       `YFLN ${fields.map(f => (Array.isArray(f) ? f[1] : f)).join(' ')}`,
       `FWGN ${fields.map(() => 1).join(' ')}`,
@@ -158,6 +178,8 @@
     SF10: 1.72825,
     SAPPHIRE: 1.7682,
     MGF2: 1.3777,
+    'S-BAL35': 1.58913,
+    'S-BAL35R': 1.58913,
   };
   /** Their Abbe numbers (d line). */
   const GLASS_ABBE = {
@@ -183,21 +205,256 @@
     SF10: 28.41,
     SAPPHIRE: 72.24,
     MGF2: 106.18,
+    'S-BAL35': 61.14,
+    'S-BAL35R': 60.96,
   };
 
+  /** A surface placed absolutely (s: vertex V, axis ez, in 3D also ex, ey; curvature c along ez, conic k, mirror, n after,
+   *  abbe, para and f) as a row of this tool, met by the axis ray r (hit there: h). Its axis is taken facing the light, its
+   *  off-axis height (or, near an equator, its normal angle) read where the ray lands, and its tilt (3D: tilt, tilt y and
+   *  clock, from the incoming frame fr = [x, y], carried on as build carries it) from its axis. Returns { row, fr }. */
+  function placed(s, r, h, D3, fr) {
+    const σ = dot(s.ez, r.u) < 0 ? -1 : 1;
+    const ez = s.ez.map(v => σ * v);
+    const c = σ * s.c;
+    const base = {
+      type: s.mirror ? 'mirror' : s.para ? 'paraxial' : 'refract',
+      ...(s.para && { f: s.f }),
+      R: c ? 1 / c : 0,
+      k: s.k,
+      t: 0,
+      n: s.mirror ? 1 : s.n,
+      ...(s.abbe && !s.mirror ? { abbe: s.abbe } : {}),
+      ap: 0,
+    };
+    const q = add(h.p, s.V, -1);
+    if (!D3) {
+      const y = c ? dot(q, [0, ez[2], -ez[1]]) : 0;
+      const th = angleAt(c, s.k, y, dot(q, ez));
+      const steep = Math.abs(th) > 80; // near or past an ellipsoid's equator: by angle
+      return {
+        row: {
+          ...base,
+          d: steep ? th : y,
+          ...(steep ? { oa: 'angle' } : {}),
+          tilt: ((angle(ez) - angle(r.u) + 540) % 360) - 180,
+        },
+        fr,
+      };
+    }
+    // the segment's azimuth on the parent becomes the clock: of ±, the smaller clock
+    const [fx, fy] = fr;
+    const zq = dot(q, ez);
+    const ρv = add(q, ez, -zq);
+    const ρ = c ? Math.hypot(...ρv) : 0;
+    const Fin = [fx, fy, r.u];
+    const ref = Math.abs(dot(fy, ez)) < 0.99 ? fy : fx;
+    const yh = ρ > 1e-9 * (1 + Math.hypot(...q)) ? ρv.map(v => v / ρ) : unit(add(ref, ez, -dot(ref, ez)));
+    const opt = [1, -1]
+      .map(g => {
+        const ey = yh.map(v => g * v);
+        const ex = cross(ey, ez);
+        const e = euler(Fin.map(f => [ex, ey, ez].map(w => dot(f, w))));
+        return { g, ex, e };
+      })
+      .sort((a, b) => Math.abs(a.e[2]) - Math.abs(b.e[2]))[0];
+    const y = opt.g * ρ;
+    const th = angleAt(c, s.k, y, zq);
+    const steep = Math.abs(th) > 80;
+    return {
+      row: {
+        ...base,
+        d: steep ? th : y,
+        ...(steep ? { oa: 'angle' } : {}),
+        tilt: opt.e[0],
+        tiltY: opt.e[1],
+        clock: opt.e[2],
+      },
+      fr: carry(fx, fy, r.u, h.u, opt.ex),
+    };
+  }
+  /** Round-off in placed rows (1e-14 off-axis and the like) read as 0; planar rows keep no tilt y or clock. */
+  function tidy(rows) {
+    const size = Math.max(1, ...rows.map(r => Math.abs(r.t)));
+    for (const r of rows)
+      for (const k of ['t', 'R', 'd', 'tilt', 'tiltY', 'clock', 'ap'])
+        if (typeof r[k] === 'number')
+          r[k] =
+            Math.abs(r[k]) < 1e-11 * (['tilt', 'tiltY', 'clock'].includes(k) ? 1 : size)
+              ? 0
+              : +r[k].toPrecision(14);
+    for (const r of rows) for (const k of ['tiltY', 'clock']) if (r[k] === 0) delete r[k];
+    return rows;
+  }
+
+  // ── Configurations (OpticStudio's multi-configuration editor). Each operand line is `OP int1 config value solve int2 …`:
+  // int1 the surface (IGNM: the first of a range, int2 its last; PRAM: int2 the parameter), value as the editor shows it
+  // (pickups already resolved). The lens data in the file is the saved configuration's.
+  /** The operands that change the surfaces, applied to the parsed surfaces Z for configuration k (IGNM is read by the
+   *  importer itself). */
+  const MCE_DONE = ['THIC', 'CRVT', 'CONN', 'PRAM', 'GLSS', 'MCOM', 'SDIA', 'IGNM', 'MOFF'];
+  const quoted = a => /"([^"]*)"/.exec(a.join(' '))?.[1];
+  function mceApply(head, Z, k) {
+    const at = i => Z.find(z => z.i === i);
+    const glassOf = name => Z.find(z => z.GLAS?.[0]?.[0] === name)?.GLAS[0]; // (another surface's record of it: its n_d, V_d)
+    for (const op of MCE_DONE)
+      for (const a of head[op] ?? []) {
+        if (+a[1] !== k || op === 'IGNM' || op === 'MOFF') continue;
+        const z = at(+a[0]);
+        if (!z) continue;
+        if (op === 'THIC') z.DISZ = [[a[2]]];
+        else if (op === 'CRVT') z.CURV = [[a[2], ...(z.CURV?.[0]?.slice(1) ?? [])]];
+        else if (op === 'CONN') z.CONI = [[a[2]]];
+        else if (op === 'SDIA') z.DIAM = [[a[2], ...(z.DIAM?.[0]?.slice(1) ?? [])]];
+        else if (op === 'PRAM') z.PARM = [...(z.PARM ?? []).filter(p => +p[0] !== +a[4]), [a[4], a[2]]];
+        else if (op === 'MCOM') z.COMM = [(quoted(a) ?? '').split(' ').filter(Boolean)];
+        else if (op === 'GLSS') {
+          const g = quoted(a) ?? '';
+          if (!g) delete z.GLAS;
+          else if (z.GLAS?.[0]?.[0] !== g) z.GLAS = [glassOf(g) ?? [g]];
+        }
+      }
+  }
+  /** Operand lines of the multi-configuration editor: [op, its lines]. */
+  const mceOps = (head, n) =>
+    Object.entries(head).filter(
+      ([op, ls]) =>
+        /^[A-Z]{4}$/.test(op) &&
+        ls.every(
+          a => a.length >= 6 && a.includes('""') && Number.isInteger(+a[1]) && +a[1] >= 1 && +a[1] <= n,
+        ),
+    );
+
+  /** Every configuration of a .zmx: each imported on its own (fromZemax with config k), then put together as this tool's
+   *  configurations (src/engine/configs.js): the rows of the file's surfaces in their order, each configuration having the
+   *  ones it doesn't ignore, and the values that differ between them its own. The saved configuration is the active one.
+   *  The plane ('auto') is one they all lie in, else 3D. Returns fromZemax's result for the saved configuration, its rows
+   *  with ids, plus configs. */
+  function fromZemaxConfigs(txt, { plane, keepDummies, n }) {
+    const all = p => {
+      const out = [];
+      for (let k = 1; k <= n; k++)
+        try {
+          out.push({ k, im: fromZemax(txt, { plane: p, keepDummies, config: k }) });
+        } catch (err) {
+          out.push({ k, err });
+        }
+      return out;
+    };
+    let per;
+    if (plane === 'auto') {
+      for (const p of ['yz', 'xz', '3d']) {
+        per = all(p);
+        if (p === '3d' || per.every(x => !x.im?.warnings.some(w => /out of the/.test(w)))) break;
+      }
+    } else per = all(plane);
+    const head = {};
+    for (const raw of txt.split(/\r?\n/)) {
+      if (!raw.trim() || /^\s/.test(raw)) continue;
+      const [key, ...a] = raw.trim().split(/\s+/);
+      (head[key] ??= []).push(a);
+    }
+    const saved = +head.MNUM?.[0]?.[1] || 1;
+    const ok = per.filter(x => x.im);
+    if (!ok.length) throw per[0].err;
+    const main = (ok.find(x => x.k === saved) ?? ok[0]).im;
+    const warnings = new Set();
+    for (const x of per)
+      if (x.err) warnings.add(`configuration ${x.k} not imported: ${x.err.message}`);
+      else if (x.im !== main)
+        for (const w of x.im.warnings)
+          if (!main.warnings.includes(w)) warnings.add(`configuration ${x.k}: ${w}`);
+    // names: the comments on the editor's comment lines (MOFF), per configuration
+    const names = {};
+    for (const a of head.MOFF ?? []) {
+      const t = quoted(a);
+      if (t && !(names[+a[1]] ??= []).some(x => x.toLowerCase() === t.toLowerCase())) names[+a[1]].push(t);
+    }
+    // operands not carried over (wavelengths, apertures, …), where they differ between configurations
+    const skipped = mceOps(head, n)
+      .filter(([op]) => !MCE_DONE.includes(op))
+      .filter(([, ls]) => {
+        const by = {};
+        for (const a of ls) (by[a[0] + ' ' + (a[4] ?? '')] ??= new Set()).add(a[2]);
+        return Object.values(by).some(v => v.size > 1);
+      })
+      .map(([op]) => op);
+    if (skipped.length)
+      warnings.add(
+        `not imported per configuration (each has the saved one's): ${skipped.join(', ')} in the multi-configuration editor`,
+      );
+    // the pool: every configuration's rows by the file's surface, in its order (the pupil first)
+    const id = r => (r._zi === undefined ? 'p' : 'z' + r._zi);
+    const list = ok.map(x => ({
+      id: 'c' + x.k,
+      name: names[x.k]?.join(' · ') || `Config ${x.k}`,
+      set: {},
+      solved: {},
+    }));
+    const rowsOf = ok.map(x => x.im.rows.map(r => ({ ...r, id: id(r) })));
+    const order = [...new Set(rowsOf.flat().map(r => r.id))].sort((a, b) =>
+      a === 'p' ? -1 : b === 'p' ? 1 : +a.slice(1) - +b.slice(1),
+    );
+    const mi = ok.findIndex(x => x.im === main);
+    const pool = order.map(rid => {
+      const have = rowsOf.map((rs, ci) => [ci, rs.find(r => r.id === rid)]).filter(([, r]) => r);
+      const base = { ...(have.find(([ci]) => ci === mi) ?? have[0])[1] };
+      delete base._zi;
+      for (const k of new Set(have.flatMap(([, r]) => Object.keys(r)))) {
+        if (k === '_zi' || k === 'id') continue;
+        const vals = have.map(([, r]) => JSON.stringify(r[k]));
+        if (vals.every(v => v === vals[0])) continue;
+        for (const [ci, r] of have) (list[ci].set[rid] ??= {})[k] = r[k] === undefined ? null : r[k];
+      }
+      if (have.length < ok.length) base.only = have.map(([ci]) => list[ci].id);
+      return base;
+    });
+    const sys = { rows: [], configs: { active: mi, show: [], list, rows: pool } };
+    const rows = Optics.configRows(sys, mi);
+    const counts = rowsOf.map(rs => rs.length - 1);
+    warnings.add(
+      `${n} configurations${ok.length < n ? ` (${ok.length} imported)` : ''}: ${list.map((c, ci) => `${c.name} (${counts[ci]} surfaces)`).join('; ')}. The saved one is shown; each leaves out the surfaces it ignores.`,
+    );
+    return {
+      ...main,
+      rows,
+      configs: sys.configs,
+      warnings: [...main.warnings, ...warnings],
+    };
+  }
+
   /** Best-effort import of a Zemax OpticStudio sequential file (.zmx text; see decodeText) into rows for this tool.
-   *  Kept: radius, conic, spacings, coordinate breaks, mirrors, glass indices and Abbe numbers, the stop,
-   *  fields, primary wavelength, the aperture and surface comments. Ignored, with a warning where they occur: solves,
-   *  multiple configurations (the lens data as saved), aspheric and other higher-order terms, apertures, and anything out
-   *  of the drawn plane. plane: the file's global plane drawn as this tool's y–z plane: 'yz' (the default, as OpticStudio's
-   *  Cross-Section layout; out of it: decenters in x, tilts about y) or 'xz' (global x drawn as y; for systems folded in x–z).
+   *  Kept: radius, conic, spacings, coordinate breaks, mirrors, paraxial (ideal) lenses, glass indices and Abbe numbers,
+   *  the stop, fields, wavelengths, the aperture and surface comments. Several configurations: all of them, as this tool's
+   *  configurations (fromZemaxConfigs; `configs: false` for the saved one alone, `config: k` for configuration k alone),
+   *  each without the surfaces it ignores (IGNM in the multi-configuration editor). Ignored, with a warning where they
+   *  occur: solves, aspheric and other higher-order terms, apertures, and (in a plane) anything out of it. plane: the
+   *  file's global plane drawn as this tool's y–z plane: 'yz' (the default, as OpticStudio's Cross-Section layout; out of
+   *  it: decenters in x, tilts about y), 'xz' (global x drawn as y; for systems folded in x–z), '3d', or 'auto' (the first
+   *  of yz, xz the system lies in, else 3d).
    *  Placement is absolute: every surface's vertex and axis are first found in the file's global frame with OpticStudio's
    *  rules (thickness along local z; a coordinate break decenters then tilts about x, y, z in the rotated frame, or tilts
-   *  z, y, x then decenters). The on-axis ray is aimed through the stop centre, and the entrance pupil is where a small-field
-   *  chief ray crosses it in object space. This tool's pupil goes there (the origin, z along the object-space axis), and each
-   *  surface's distance, off-axis height and tilt are read off where the axis ray meets it, so the rows rebuild the same
-   *  vertices and axes. Returns { name, plane, fields, lambda, rays, grid, rows, warnings }. */
-  function fromZemax(txt, { plane = 'yz' } = {}) {
+   *  z, y, x then decenters), so the breaks themselves vanish. The axis ray is the on-axis field's chief ray, aimed through
+   *  the stop centre; a system with no on-axis field (built for an off-axis field, as a relay behind a telescope's focal
+   *  plane is) takes field 1's, and the fields become angles from it. The entrance pupil is where a nearby chief ray
+   *  crosses it in object space. This tool's pupil goes there (the origin, z along the axis ray), and each surface's
+   *  distance, off-axis height and tilt are read off where the axis ray meets it, so the rows rebuild the same vertices and
+   *  axes. Dummy planes (no power, no change of index) that are unnamed or hidden in OpticStudio, there for breaks, solves
+   *  and merit functions, are dropped unless keepDummies. Returns { name, plane, fields, lambda, lambdas, rays, grid, rows,
+   *  warnings }. */
+  function fromZemax(txt, { plane = 'yz', keepDummies = false, config, configs = true } = {}) {
+    if (configs && config === undefined) {
+      const n = +/^MNUM\s+(\d+)/m.exec(txt)?.[1] || 1;
+      if (n > 1) return fromZemaxConfigs(txt, { plane, keepDummies, n });
+    }
+    if (plane === 'auto') {
+      // the first plane the system lies in (its own y–z, else x–z), else 3D
+      for (const p of ['yz', 'xz']) {
+        const im = fromZemax(txt, { plane: p, keepDummies, config, configs });
+        if (!im.warnings.some(w => /out of the/.test(w))) return im;
+      }
+      return fromZemax(txt, { plane: '3d', keepDummies, config, configs });
+    }
     if (!['yz', 'xz', '3d'].includes(plane)) throw Error(`plane ${plane}: choose yz or xz (or 3d)`);
     const D3 = plane === '3d'; // 3D: keep x (tilts about y and z, decenters in x)
     const inP = plane === 'xz' ? 0 : 1;
@@ -225,8 +482,30 @@
       (warn(`unknown units ${head.UNIT[0][0]}; read as mm`), 1);
     const num = (v, d = 0) => (v === undefined ? d : /^inf/i.test(v) ? Infinity : +v);
     const get = (z, k, j = 0) => num(z[k]?.[0]?.[j]);
-    if (num(head.MNUM?.[0]?.[0], 1) > 1)
-      warn(`${head.MNUM[0][0]} configurations: imported the lens data as saved (the active configuration)`);
+    // Configurations: the lens data is saved as the active one shows it, except the surfaces it ignores (IGNM in the
+    // multi-configuration editor), which are left out here as OpticStudio leaves them out of the trace (thickness and all).
+    const nConf = num(head.MNUM?.[0]?.[0], 1);
+    const saved = num(head.MNUM?.[0]?.[1], 1) || 1;
+    const conf = config ?? saved;
+    if (conf < 1 || conf > nConf) throw Error(`no configuration ${conf}: the file has ${nConf}`);
+    if (conf !== saved) mceApply(head, Z, conf);
+    const ignored = new Set();
+    for (const a of head.IGNM ?? [])
+      if (+a[1] === conf && +a[2]) for (let k = +a[0]; k <= Math.max(+a[0], +a[4] || 0); k++) ignored.add(k);
+    if (nConf > 1 && config === undefined) {
+      const cname = (head.MOFF ?? [])
+        .map(a => a.join(' '))
+        .map(l => +l.split(/\s+/)[1] === conf && /"([^"]*)"/.exec(l)?.[1])
+        .find(Boolean);
+      const runs = [...ignored]
+        .sort((a, b) => a - b)
+        .reduce((r, k) => (r.length && r.at(-1)[1] === k - 1 ? (r.at(-1)[1] = k) : r.push([k, k]), r), [])
+        .map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`));
+      warn(
+        `${nConf} configurations: imported configuration ${conf}${cname ? ` (${cname})` : ''}, as saved` +
+          (runs.length ? `; the surfaces it ignores (${runs.join(', ')}) are left out` : ''),
+      );
+    }
     // Frames in the file's global coordinates (surface 0 at the origin): vertex O and axes M = [X, Y, Z] as columns.
     const mul = (A, B) =>
       A.map((r, i) => B[0].map((_, j) => r.reduce((s, _, k) => s + A[i][k] * B[k][j], 0)));
@@ -272,6 +551,7 @@
     const A = [];
     if (isFinite(obj)) O = [0, 0, obj];
     for (const z of Z.slice(1)) {
+      if (ignored.has(z.i)) continue;
       const type = z.TYPE?.[0][0] ?? 'STANDARD';
       const t = get(z, 'DISZ') * f;
       const P = k => num(z.PARM?.find(p => +p[0] === k)?.[1]);
@@ -297,26 +577,43 @@
         const mirror = g?.[0] === 'MIRROR';
         const ez = [M[0][2], M[1][2], M[2][2]];
         if (!mirror) {
-          n =
-            !g || (g[0] === '___BLANK' && !(+g[3] > 1))
-              ? 1
-              : +g[3] > 1 && +g[3] < 5
-                ? +g[3]
-                : (GLASS[g[0].toUpperCase()] ?? (warn(`unknown glass ${g[0]}: n = 1.5`), 1.5));
+          // a catalogue glass by its name (the n_d, V_d written beside it are often placeholders); a model glass
+          // (___BLANK) by those values; another name by them when they look real, else n = 1.5
+          const name = g?.[0]?.toUpperCase();
+          const nd = +g?.[3];
+          const vd = +g?.[4];
+          const real = nd > 1 && nd < 5;
+          n = !g
+            ? 1
+            : name === '___BLANK'
+              ? real
+                ? nd
+                : 1
+              : (GLASS[name] ??
+                (real
+                  ? (warn(`glass ${g[0]}: n_d ${nd} as the file gives it`), nd)
+                  : (warn(`unknown glass ${g[0]}: n = 1.5`), 1.5)));
           abbe =
             n === 1
               ? 0
-              : g?.[0] === '___BLANK'
-                ? +g[4] > 0 && +g[4] < 1e5
-                  ? +g[4]
-                  : 0
-                : (GLASS_ABBE[g?.[0]?.toUpperCase()] ?? 0);
+              : (GLASS_ABBE[name] ??
+                (real && vd > 0 && vd < 1e5 && (name === '___BLANK' || !GLASS[name]) ? vd : 0));
         }
+        const para = type === 'PARAXIAL';
         if (
-          !['STANDARD', 'EVENASPH', 'TOROIDAL', 'BICONICX', 'BICONIC', 'ODDASPH', 'XASPHERE'].includes(type)
+          ![
+            'STANDARD',
+            'PARAXIAL',
+            'EVENASPH',
+            'TOROIDAL',
+            'BICONICX',
+            'BICONIC',
+            'ODDASPH',
+            'XASPHERE',
+          ].includes(type)
         )
           warn(`${type} surface${nm ? ` (${nm})` : ''} read as a standard surface`);
-        else if (type !== 'STANDARD' && z.PARM?.some(p => +p[1]))
+        else if (!['STANDARD', 'PARAXIAL'].includes(type) && z.PARM?.some(p => +p[1]))
           warn(`higher-order terms of ${type} surfaces ignored`);
         if (!D3 && (Math.abs(O[outP]) > 1e-9 || Math.abs(ez[outP]) > 1e-12)) out = true;
         const ax = j => [M[0][j], M[1][j], M[2][j]];
@@ -326,12 +623,14 @@
           V: D3 ? [...O] : [0, O[inP], O[2]],
           ez: D3 ? ax(2) : unit([0, ez[inP], ez[2]]),
           ...(D3 && { ex: ax(0), ey: ax(1) }),
-          c: get(z, 'CURV') / f,
-          k: get(z, 'CONI'),
+          c: para ? 0 : get(z, 'CURV') / f,
+          k: para ? 0 : get(z, 'CONI'),
           mirror,
           n,
           abbe,
           stop: !!z.STOP,
+          ...(para && { para, f: P(1) * f }), // an ideal lens: its focal length
+          hidden: z.HIDE?.[0]?.[0] === '1', // (hidden in OpticStudio's layouts)
         });
       }
       O = add(O, col(M, [0, 0, t]));
@@ -361,28 +660,75 @@
       G.findIndex(a => a.stop),
     );
     const fin = isFinite(obj);
+    // The axis: the on-axis field's chief ray, or, when the fields leave out the axis (a system used off-axis, built for
+    // field 1, say), field 1's: a collimated beam along its direction, aimed through the stop centre. Fields are then
+    // taken relative to it.
+    const fty = num(head.FTYP?.[0]?.[0]);
+    const nf = num(head.FTYP?.[0]?.[2], 1);
+    const FX = (head.XFLN?.[0] ?? []).slice(0, nf).map(v => num(v));
+    const FY = (head.YFLN?.[0] ?? ['0']).slice(0, nf).map(v => num(v));
+    const F2 = FY.map((y, k) => [FX[k] ?? 0, y]); // (x, y) angles
+    const inPlane = ([x, y]) => (D3 ? [x, y] : [plane === 'xz' ? x : y]); // (the components drawn)
+    const fdir = ([x, y]) =>
+      D3
+        ? unit([Math.tan(x * rd), Math.tan(y * rd), 1])
+        : unit([0, Math.tan((plane === 'xz' ? x : y) * rd), 1]);
+    const offAxis = !fin && fty === 0 && FY.length && !F2.some(F => inPlane(F).every(v => !v));
+    const w0 = offAxis ? fdir(F2[0]) : [0, 0, 1];
+    if (offAxis)
+      warn(
+        `no on-axis field: the axis is field 1's chief ray (${inPlane(F2[0]).join('°, ')}°), and the fields are angles from it`,
+      );
     const ray = (x, h) =>
       fin
         ? { p: [0, h, 0], u: [0, Math.sin(x), Math.cos(x)], n: 1 }
-        : { p: [0, x, 0], u: [0, Math.sin(h), Math.cos(h)], n: 1 };
-    const atStop = r => {
+        : offAxis
+          ? {
+              p: [D3 ? x[0] : 0, D3 ? x[1] : x, 0],
+              u: h ? unit(add(w0, [0, 1, -w0[1] / w0[2]], h)) : w0,
+              n: 1,
+            }
+          : { p: [0, x, 0], u: [0, Math.sin(h), Math.cos(h)], n: 1 };
+    const atStop = (r, k = 1) => {
       for (let j = 0; j <= si; j++) if (!(r = hit(G[j], r))) return NaN;
-      return r.loc[1];
+      return r.loc[k];
     };
-    const aim = (h, y = 0) => secant(x => atStop(ray(x, h)) - y, 0, 1e-3); // x: height (collimated) or angle (finite); h: field
+    // aiming: the start height (collimated; in 3D off-axis, the start point x, y) or angle (from an object point)
+    const aim = (h, y = 0) => {
+      if (!(offAxis && D3)) return secant(x => atStop(ray(x, h)) - y, 0, 1e-3);
+      let q = [0, 0];
+      const res = q => [atStop(ray(q, h), 0), atStop(ray(q, h), 1) - y];
+      for (let it = 0; it < 40; it++) {
+        const r0 = res(q);
+        if (!r0.every(isFinite)) return [NaN, NaN];
+        if (Math.hypot(...r0) < 1e-12 * (1 + Math.abs(y) + Math.hypot(...q))) break;
+        const e = 1e-6 * (1 + Math.hypot(...q));
+        const J = [0, 1].map(k => res(q.map((v, i) => v + (i === k ? e : 0))).map((v, i) => (v - r0[i]) / e));
+        const det = J[0][0] * J[1][1] - J[1][0] * J[0][1];
+        if (!det) return [NaN, NaN];
+        q = [
+          q[0] - (r0[0] * J[1][1] - r0[1] * J[1][0]) / det,
+          q[1] - (J[0][0] * r0[1] - J[0][1] * r0[0]) / det,
+        ];
+      }
+      return q;
+    };
+    const ok = x => [x].flat().every(isFinite);
     const x0 = aim(0);
     const ε = 1e-4;
     const xε = aim(fin ? 1e-3 * Math.max(1, Math.abs(obj) * 1e-3) : ε);
-    if (!isFinite(x0)) throw Error('could not aim the on-axis ray through the stop');
+    if (!ok(x0)) throw Error('could not aim the axis ray through the stop');
     const r0 = ray(x0, 0);
     const u0 = r0.u;
-    const Yw = [0, u0[2], -u0[1]];
+    const Yw = unit([0, u0[2], -u0[1]]); // the drawn y: across the axis, in the file's y–z plane
     let E = r0.p; // entrance pupil: where a chief ray crosses the axis ray
-    if (isFinite(xε)) {
+    if (ok(xε)) {
       const r1 = ray(xε, fin ? 1e-3 * Math.max(1, Math.abs(obj) * 1e-3) : ε);
+      // the point of the axis ray nearest the nearby chief ray
       const w = add(r1.p, r0.p, -1);
-      const den = r0.u[1] * r1.u[2] - r0.u[2] * r1.u[1];
-      const s = den && (w[1] * r1.u[2] - w[2] * r1.u[1]) / den;
+      const c = cross(r0.u, r1.u);
+      const den = dot(c, c);
+      const s = den ? dot(cross(w, r1.u), c) / den : NaN;
       if (Math.abs(s) < 1e7) E = add(r0.p, r0.u, s);
     }
     // Aperture: the entrance pupil's semi-diameter.
@@ -390,7 +736,8 @@
     const lateral = x => {
       const r = ray(x, 0);
       const s = dot(add(E, r.p, -1), u0) / dot(r.u, u0);
-      return Math.abs(dot(add(add(r.p, r.u, s), E, -1), Yw));
+      const q = add(add(r.p, r.u, s), E, -1);
+      return Math.hypot(...add(q, u0, -dot(q, u0)));
     };
     let ap = NaN;
     if (head.FLOA) ap = stopY ? lateral(aim(0, stopY)) : NaN;
@@ -418,6 +765,7 @@
         j === si &&
         !s.c &&
         !s.mirror &&
+        !s.para &&
         s.n === nIn &&
         Math.hypot(...s.V) < 1e-6 * (1 + Math.abs(obj === Infinity ? 0 : obj))
       ) {
@@ -429,86 +777,37 @@
         warn(`the axis ray misses surface ${a.zi}${a.name ? ` (${a.name})` : ''}; import stops there`);
         break;
       }
-      const σ = dot(s.ez, r.u) < 0 ? -1 : 1;
-      const ez = s.ez.map(v => σ * v);
-      const c = σ * s.c;
-      const ey = [0, ez[2], -ez[1]];
       rows.at(-1).t = dot(add(h.p, r.p, -1), r.u);
-      if (D3) {
-        // the segment's azimuth on the parent becomes the clock: of ±, the smaller clock
-        const q = add(h.p, s.V, -1);
-        const zq = dot(q, ez);
-        const ρv = add(q, ez, -zq);
-        const ρ = c ? Math.hypot(...ρv) : 0;
-        const Fin = [fx, fy, r.u];
-        const yh =
-          ρ > 1e-9 * (1 + Math.hypot(...q))
-            ? ρv.map(v => v / ρ)
-            : unit(
-                add(
-                  Math.abs(dot(fy, ez)) < 0.99 ? fy : fx,
-                  ez,
-                  -dot(Math.abs(dot(fy, ez)) < 0.99 ? fy : fx, ez),
-                ),
-              );
-        const opt = [1, -1]
-          .map(g => {
-            const ey = yh.map(v => g * v);
-            const ex = cross(ey, ez);
-            const e = euler(Fin.map(f => [ex, ey, ez].map(w => dot(f, w))));
-            return { g, ex, e };
-          })
-          .sort((a, b) => Math.abs(a.e[2]) - Math.abs(b.e[2]))[0];
-        const y = opt.g * ρ;
-        const th = angleAt(c, s.k, y, zq);
-        const steep = Math.abs(th) > 80;
-        rows.push({
-          name: a.name || (j === A.length - 1 ? 'Image' : ''),
-          type: s.mirror ? 'mirror' : 'refract',
-          R: c ? 1 / c : 0,
-          k: s.k,
-          d: steep ? th : y,
-          ...(steep ? { oa: 'angle' } : {}),
-          tilt: opt.e[0],
-          tiltY: opt.e[1],
-          clock: opt.e[2],
-          t: 0,
-          n: s.mirror ? 1 : s.n,
-          ...(s.abbe && !s.mirror ? { abbe: s.abbe } : {}),
-          ap: 0,
-        });
-        [fx, fy] = carry(fx, fy, r.u, h.u, opt.ex);
-      } else {
-        const q = add(h.p, s.V, -1);
-        const y = c ? dot(q, ey) : 0;
-        const th = angleAt(c, s.k, y, dot(q, ez));
-        const steep = Math.abs(th) > 80; // near or past an ellipsoid's equator: by angle
-        rows.push({
-          name: a.name || (j === A.length - 1 ? 'Image' : ''),
-          type: s.mirror ? 'mirror' : 'refract',
-          R: c ? 1 / c : 0,
-          k: s.k,
-          d: steep ? th : y,
-          ...(steep ? { oa: 'angle' } : {}),
-          tilt: ((angle(ez) - angle(r.u) + 540) % 360) - 180,
-          t: 0,
-          n: s.mirror ? 1 : s.n,
-          ...(s.abbe && !s.mirror ? { abbe: s.abbe } : {}),
-          ap: 0,
-        });
-      }
+      const pl = placed(s, r, h, D3, [fx, fy]);
+      rows.push({
+        name: a.name || (j === A.length - 1 ? 'Image' : ''),
+        ...pl.row,
+        _zi: a.zi, // (the file's surface: what identifies it across configurations)
+        _drop: !s.mirror && !s.para && !s.c && !a.stop && s.n === nIn && (s.hidden || !a.name), // (a dummy plane: see below)
+      });
+      [fx, fy] = pl.fr;
       r = h;
       nIn = h.n;
     }
-    const size = Math.max(1, ...rows.map(r => Math.abs(r.t))); // round-off (1e-14 off-axis and the like) reads as 0
-    for (const r of rows)
-      for (const k of ['t', 'R', 'd', 'tilt', 'tiltY', 'clock', 'ap'])
-        if (typeof r[k] === 'number')
-          r[k] =
-            Math.abs(r[k]) < 1e-11 * (['tilt', 'tiltY', 'clock'].includes(k) ? 1 : size)
-              ? 0
-              : +r[k].toPrecision(14);
-    for (const r of rows) for (const k of ['tiltY', 'clock']) if (r[k] === 0) delete r[k]; // (a planar row stays planar)
+    // Dummy planes (no power, no change of index) that OpticStudio hides or that have no name, there to anchor coordinate
+    // breaks, solves and merit-function targets, are dropped: the axis runs straight through them, so the distance to them
+    // and on from them add up. Named, visible ones (focal planes, pupil planes, stops) are kept.
+    const dropped = [];
+    for (let i = rows.length - 2; i > 0; i--)
+      if (rows[i]._drop && !keepDummies) {
+        rows[i - 1].t += rows[i].t;
+        dropped.push(i);
+        rows.splice(i, 1);
+      }
+    for (const r of rows) {
+      delete r._drop;
+      if (config === undefined) delete r._zi;
+    }
+    if (dropped.length)
+      warn(
+        `${dropped.length} dummy surface${dropped.length > 1 ? 's' : ''} (no power; unnamed or hidden in OpticStudio) left out: the optics are placed as they were`,
+      );
+    tidy(rows);
     const [p, q] = rows.slice(-2); // an image plane written on top of the last surface
     if (
       rows.length > 2 &&
@@ -522,17 +821,30 @@
       !q.tiltY
     )
       rows.pop();
-    const fty = num(head.FTYP?.[0]?.[0]);
-    const nf = num(head.FTYP?.[0]?.[2], 1);
     const sg = Yw[1] < 0 ? -1 : 1;
     const [FIN, FOUT] = plane === 'xz' ? ['XFLN', 'YFLN'] : ['YFLN', 'XFLN']; // the fields in the drawn plane (3D: y, with x below)
-    let fields = (head[FIN]?.[0] ?? ['0']).slice(0, nf).map(v => sg * num(v) * (fty === 1 ? f : 1));
-    if (D3)
-      fields = fields.map((y, k) => {
-        const x = num(head.XFLN?.[0]?.[k]) * (fty === 1 ? f : 1);
+    let fields;
+    if (fty === 0 && !fin) {
+      // angles: each field's direction, as seen from the axis (exactly the file's angles when the axis is along z)
+      const deg = (a, b) => {
+        const v = Math.atan2(a, b) / rd;
+        return Math.abs(v) < 1e-12 ? 0 : offAxis ? Math.round(v * 1e7) / 1e7 : +v.toPrecision(14); // (from field 1: to 1e-7°)
+      };
+      fields = F2.map(F => {
+        const w = Td(fdir(F));
+        const y = deg(w[1], w[2]);
+        const x = D3 ? deg(w[0], w[2]) : 0;
         return x ? [x, y] : y;
-      }); // (x as drawn: Xw is +x)
-    else if ((head[FOUT]?.[0] ?? []).slice(0, nf).some(v => +v))
+      });
+    } else {
+      fields = (head[FIN]?.[0] ?? ['0']).slice(0, nf).map(v => sg * num(v) * (fty === 1 ? f : 1));
+      if (D3)
+        fields = fields.map((y, k) => {
+          const x = num(head.XFLN?.[0]?.[k]) * (fty === 1 ? f : 1);
+          return x ? [x, y] : y;
+        }); // (x as drawn: Xw is +x)
+    }
+    if (!D3 && (head[FOUT]?.[0] ?? []).slice(0, nf).some(v => +v))
       warn(`${plane === 'yz' ? 'x' : 'y'} fields ignored`);
     if (!((fty === 0 && !fin) || (fty === 1 && fin))) {
       warn(`field type ${fty} not read: on-axis field only`);
@@ -544,7 +856,8 @@
       rows[0].ap = Math.abs(F) / (2 * -ap);
       if (!isFinite(rows[0].ap)) rows[0].ap = stopY || 10;
     }
-    const wl = head.WAVM?.map(w => [num(w[0]), num(w[1])]).filter(w => w[1] > 0);
+    const nw = (head.WAVM?.length >= 24 && num(head.FTYP?.[0]?.[3], Infinity)) || Infinity; // (OpticStudio lists all 24 slots; FTYP says how many are in use)
+    const wl = head.WAVM?.map(w => [num(w[0]), num(w[1])]).filter(w => w[1] > 0 && w[0] <= nw);
     const pw = num(head.PWAV?.[0]?.[0], 1);
     const lambda = wl?.find(w => w[0] === pw)?.[1] || 0.55;
     const lambdas = wl?.length > 1 ? [lambda, ...wl.filter(w => w[0] !== pw).map(w => w[1])] : undefined; // the primary first
@@ -561,6 +874,164 @@
     };
   }
 
-  Object.assign(Optics, { zemax, decodeText, GLASS, fromZemax });
+  /** The system run backwards: light from where it was imaged, through the same optics in the opposite order, to where it
+   *  came from. The optics stay put (each surface's vertex, axis, curvature and conic), so every ray retraces its path; what
+   *  changes is how they are described: the pupil moves to the exit pupil (where the chief rays leave from; its size the
+   *  beam's there), each surface is met from the other side (its R flips sign as seen by the light, refracting surfaces
+   *  lead back into the index before them), and the beam starts from the image: from the point the axis ray reaches on the
+   *  last surface with the fields as the image points' heights there, or, when the light left collimated, collimated with
+   *  the fields as the angles it left at. It ends where the original started: on the original pupil (collimated light), or
+   *  at its source point (a plane there). Solves, locks and configurations are not carried over (the geometry is).
+   *  sys: { rows, fields, ... }. Returns { rows, fields, warnings }. */
+  function reverseSystem(sys) {
+    const rows = sys.rows;
+    const S = build(rows);
+    const n = S.length;
+    const warnings = [];
+    if (n < 2) throw Error('nothing to reverse: the system needs an optic before its last surface');
+    const fields = sys.fields ?? [0];
+    const D3 = S.some(s => s.ex) || fields.some(Array.isArray);
+    const beam = S.beam;
+    const a = rows[0].ap;
+    const last = S[n - 1];
+    const L = S[n - 2]; // the last optic: image space follows it
+    const u0 = L.uOut;
+    let fin = inFocus(S, n - 1); // where the light arriving at the last surface focuses (null: collimated)
+    const after = (px, py, f) => trace(S, px, py, f)[n - 2];
+    // the exit pupil: where a chief ray a little off axis crosses the axis ray in image space
+    const ε = beam ? 1e-4 * Math.max(1, Math.abs(beam)) : 1e-4;
+    const r0 = { p: L.P, u: u0 };
+    const r1 = after(0, 0, ε);
+    let E = null;
+    if (r1) {
+      const c = cross(r0.u, r1.u);
+      const den = dot(c, c);
+      const sAx = den ? dot(cross(add(r1.p, r0.p, -1), r1.u), c) / den : NaN;
+      if (Math.abs(sAx) < 1e7 * Math.max(1, a)) E = add(r0.p, r0.u, sAx);
+    }
+    if (!E) {
+      E = L.P;
+      warnings.push('the chief rays leave parallel (telecentric): the pupil is put at the last optic');
+    }
+    // its size: the marginal ray's distance from the axis there
+    const rm = after(0, a, 0);
+    let ap = a;
+    if (rm) {
+      const t = dot(add(E, rm.p, -1), u0) / dot(rm.u, u0);
+      const q = add(add(rm.p, rm.u, t), E, -1);
+      ap = Math.hypot(...add(q, u0, -dot(q, u0)));
+    }
+    // the reversed frame: the pupil at E, z back along the beam
+    const w = u0.map(v => -v);
+    const Yn = Math.hypot(w[1], w[2]) > 1e-9 ? unit([0, w[2], -w[1]]) : unit(cross(w, [1, 0, 0]));
+    const Xn = cross(Yn, w);
+    const T = p => [D3 ? dot(add(p, E, -1), Xn) : 0, dot(add(p, E, -1), Yn), dot(add(p, E, -1), w)];
+    const Td = v => [D3 ? dot(v, Xn) : 0, dot(v, Yn), dot(v, w)];
+    const round = v => (Math.abs(v) < 1e-12 ? 0 : +v.toPrecision(12));
+    const fround = v => (Math.abs(v) < 1e-9 ? 0 : +v.toPrecision(9)); // (fields, as typed)
+    // the source: the image, where the axis ray reaches the last surface when that is (near) the focus, else the focus
+    // itself; a beam slower than f/500 counts as collimated
+    let src = null;
+    if (fin) {
+      const dE = Math.abs(dot(add(fin, E, -1), u0));
+      if (dE > 1000 * Math.max(ap, a)) fin = null;
+      else if (Math.abs(dot(add(fin, last.P, -1), u0)) <= 0.1 * dE) src = last.P;
+      else {
+        src = fin;
+        warnings.push('the last surface is not at the image: the light starts from the focus instead');
+      }
+    }
+    const R = fin ? T(src)[2] : 0;
+    if (fin && (last.c || Math.abs(dot(last.ez, u0)) < 1 - 1e-9))
+      warnings.push(
+        'the image surface is tilted or curved: the field points are taken on a plane across the beam',
+      );
+    const nf = fields.map(f => {
+      const tr = trace(S, 0, 0, f);
+      if (tr.length < n) return null;
+      const v = Td(tr[n - 2].u.map(x => -x));
+      if (!fin) {
+        const ax = fround((Math.atan2(v[0], v[2]) * 180) / Math.PI);
+        const ay = fround((Math.atan2(v[1], v[2]) * 180) / Math.PI);
+        return D3 && ax ? [ax, ay] : ay;
+      }
+      const q = T(tr[n - 2].p); // (the chief ray leaving the last optic, carried to the source's plane)
+      const λ = (R - q[2]) / v[2];
+      const [x, y] = [fround(q[0] + λ * v[0]), fround(q[1] + λ * v[1])];
+      return D3 && x ? [x, y] : y;
+    });
+    if (nf.some(f => f === null)) warnings.push('some fields don’t reach the image: they are left out');
+    // the optics, last to first, met from the other side
+    const nImg = last.nIn;
+    const out = [{ t: 0, ap: round(ap), R: round(R) }];
+    let r = { p: [0, 0, 0], u: [0, 0, 1], n: nImg };
+    let fr = [
+      [1, 0, 0],
+      [0, 1, 0],
+    ];
+    const turned = (s, i) => ({
+      ...s,
+      V: T(s.V),
+      ez: Td(s.ez),
+      ey: Td(s.ey),
+      ...(s.ex && { ex: Td(s.ex) }),
+      n: s.mirror ? s.n : s.nIn, // (into the index before it)
+      abbe: s.mirror ? 0 : i ? rows[i].abbe || 0 : 0,
+      side: s.mirror ? s.side : -s.side,
+      ap: 0,
+    });
+    const plane = (p, ez, name) => {
+      const ezw = Td(ez);
+      return { V: T(p), ez: ezw, ey: [0, ezw[2], -ezw[1]], c: 0, k: 0, d: 0, zM: 0, n: 1, name, plain: true };
+    };
+    const G = [
+      ...S.slice(0, n - 1)
+        .map((s, i) => [turned(s, i), rows[i + 1]])
+        .reverse(),
+      beam
+        ? [plane([0, 0, beam], [0, 0, 1], 'Image (the source)'), {}]
+        : [plane([0, 0, 0], [0, 0, 1], 'Pupil (where the light came in)'), {}],
+    ];
+    if (G.at(-1)[0].ey && D3) {
+      const g = G.at(-1)[0];
+      const ex = Td([1, 0, 0]);
+      Object.assign(g, { ex, ey: cross(g.ez, ex) });
+    }
+    for (const [g, row] of G) {
+      const h = hit(g, r);
+      if (!h) {
+        warnings.push(
+          `the light misses ${row.name || g.name || 'a surface'} on the way back: the reversed system stops there`,
+        );
+        break;
+      }
+      out.at(-1).t = dot(add(h.p, r.p, -1), r.u);
+      const pl = placed(g, r, h, D3, fr);
+      out.push({ name: row.name ?? g.name ?? '', ...pl.row, ...(row.ap && { ap: row.ap }) });
+      fr = pl.fr;
+      r = h;
+    }
+    // the pupil's size: so that its marginal ray meets the first optic where the original's left it
+    const rmL = after(0, a, 0);
+    if (rmL && out.length > 2) {
+      const want = Math.hypot(...add(rmL.p, L.P, -1));
+      const Sr = build(
+        out.map((r, i) => (i ? { name: '', R: 0, k: 0, d: 0, tilt: 0, t: 0, n: 1, ...r } : { R: 0, ...r })),
+      );
+      const got = h => {
+        const q = trace(Sr, 0, h, nf[0] ?? 0)[0];
+        return q ? Math.hypot(...add(q.p, Sr[0].P, -1)) - want : NaN;
+      };
+      const h = secant(got, out[0].ap, 1e-3 * out[0].ap);
+      if (isFinite(h) && h > 0) out[0].ap = h;
+    }
+    if (rows.some(r => r.solve && Object.keys(r.solve).length) || rows.some(r => r.lock))
+      warnings.push(
+        'solves and focus locks are not carried over: the reversed system is the geometry as it stands',
+      );
+    return { rows: tidy(out), fields: nf.filter(f => f !== null), warnings };
+  }
+
+  Object.assign(Optics, { zemax, decodeText, GLASS, fromZemax, reverseSystem });
   if (typeof module === 'object') module.exports = Optics;
 })(typeof module === 'object' ? require('./edit.js') : globalThis.Optics);

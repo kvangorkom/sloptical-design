@@ -173,6 +173,10 @@ cv.onpointerdown = e => {
     drag = { x: e.offsetX, y: e.offsetY, moved: false, orbit: true };
     return cv.setPointerCapture(e.pointerId);
   }
+  if (VIEWER) {
+    drag = { x: e.offsetX, y: e.offsetY, moved: false }; // a read-only page: pan, or click to pin a popup; nothing moves
+    return cv.setPointerCapture(e.pointerId);
+  }
   const fh = !tool && pickFocus(e.offsetX, e.offsetY);
   const pf =
     !fh &&
@@ -485,7 +489,7 @@ function pinAt(tg, ri, St = S) {
 function stigLock(ri, St, rows = sys.rows, mode = stigMode()) {
   const i = ri - 1;
   const r = rows[ri];
-  if (r.type !== 'mirror' || !r.R || r.lock?.f1 || r.lock?.f2 || !St[i]) return false;
+  if (r.type !== 'mirror' || !r.R || r.ball || r.lock?.f1 || r.lock?.f2 || !St[i]) return false; // (a caliball stays a sphere)
   const fin = Optics.inFocus(St, i);
   const img = Optics.inFocus(St, i + 1);
   if (!fin && !img) return false; // collimated in and out: nothing to image
@@ -599,6 +603,38 @@ function insertAt(mx, my, kind) {
     `Added ${kind === 'mirror' ? 'a mirror' : 'a plane'} after ${j ? label(j - 1) : 'the pupil'}${why ? ` · ${why}` : ''}`,
   );
 }
+/** B: a caliball on the beam under the cursor, centred on that stretch's focus. When only plain planes (an image plane, say)
+ *  follow, it takes their place as the last surface and makes the system a double pass; otherwise it goes in where pointed. */
+function insertBall(mx, my) {
+  const hit = axisAt(mx, my);
+  if (!hit) return toast('Point at the beam where it focuses to put a caliball there');
+  const { j, s } = hit;
+  const R = sys.rows;
+  const plain = r => r.type === 'refract' && !r.R && (r.n ?? 1) === (S[j - 1]?.nOut ?? 1);
+  if (j < S.length && R.slice(j + 1).every(plain)) {
+    commit();
+    hideLock();
+    R.splice(j + 1);
+    R[j].t = s;
+    if (R[j].solve) delete R[j].solve.t;
+    R.push({ ...DEF, name: 'Caliball', n: j ? S[j - 1].nOut : 1 });
+    setType(R.at(-1), 'caliball');
+    renderTable();
+    update();
+    return toast(
+      fails.has(j + 't')
+        ? 'Added a caliball, but this beam has no focus to centre it on'
+        : 'Added a caliball on the focus: a double pass now (⇄ in a popup shows the way back)',
+    );
+  }
+  insertAt(mx, my, 'plane');
+  const r = R[j + 1];
+  r.name = 'Caliball';
+  setType(r, 'caliball');
+  renderTable();
+  update();
+  toast('Added a caliball (optics follow it, so it isn’t a double pass: put it last for that)');
+}
 onDoc('keydown', e => {
   const k = e.key.toLowerCase();
   if (
@@ -607,10 +643,11 @@ onDoc('keydown', e => {
     e.altKey ||
     e.repeat ||
     !ptr ||
-    !(k === 'a' || k === 'm') ||
+    !(k === 'a' || k === 'm' || k === 'b') ||
     e.target.closest?.('input, textarea, select, dialog')
   )
     return;
   e.preventDefault();
+  if (k === 'b') return insertBall(...ptr);
   insertAt(...ptr, k === 'm' ? 'mirror' : 'plane');
 });

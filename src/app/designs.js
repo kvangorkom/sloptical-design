@@ -100,6 +100,40 @@ function newDesign() {
   update();
   toast(`New design: ${file.name}`);
 }
+/** File ▸ Reverse system: the design run backwards (Optics.reverseSystem), in a new tab beside it; this one is unchanged.
+ *  The same optics, the light from where it was imaged back to where it came from. */
+function reverseDesign() {
+  let r;
+  try {
+    r = Optics.reverseSystem({ rows: sys.rows, fields: sys.fields });
+  } catch (err) {
+    return toast(err.message);
+  }
+  const o = JSON.parse(JSON.stringify(sys));
+  const cfgs = !!o.configs;
+  for (const k of ['configs', 'flip']) delete o[k];
+  Object.assign(o, { rows: r.rows, fields: r.fields.length ? r.fields : [0], shapes: [], watch: [] });
+  const d = {
+    id: newId(),
+    sys: o,
+    file: { name: freeName(file.name.replace(/\.json$/i, '') + '-reversed'), handle: null, saved: null },
+    view: null,
+    hist: null,
+  };
+  docs.splice(doc ? docs.indexOf(doc) + 1 : docs.length, 0, d);
+  activate(d);
+  file.base = JSON.stringify(sys);
+  resetHist();
+  update();
+  const notes = [
+    ...(sys.rows[0].R
+      ? [`the light starts from the image, ${nf(Math.abs(sys.rows[0].R))} mm before the pupil`]
+      : []),
+    ...(cfgs ? ['the active configuration only'] : []),
+    ...r.warnings,
+  ];
+  toast(`Reversed: ${file.name}${notes.length ? ' · ' + notes.join('; ') : ''}`);
+}
 /** Close design d's tab (asking first if it has unsaved changes); the last one closed leaves a new untitled design. */
 async function closeDesign(d) {
   const dirty =
@@ -133,6 +167,7 @@ async function closeDesign(d) {
 }
 /** Remember every open design in this browser (the active one as json, if given). */
 function saveDocs(json) {
+  if (VIEWER) return; // (a read-only page keeps nothing: it would overwrite the app's open designs on the same site)
   try {
     localStorage.setItem(
       'optic_docs',

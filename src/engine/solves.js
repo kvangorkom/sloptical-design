@@ -7,14 +7,16 @@
     Optics;
 
   /** Solves offered for rows[ri][k]: 'focus' (the beam converges on the next surface) and 'collim' (collimated output).
-   *  On a distance they act on the next optic's output; on R, k, d, tilt or n, on this optic's own output. */
+   *  On a distance they act on the next optic's output; on R, k, d, tilt or n (a paraxial lens's f), on this optic's own output. */
   function solvesFor(rows, ri, k) {
     if (!ri) return []; // the pupil
     const more = ri < rows.length - 1; // a surface follows
-    if (k === 't') return more ? ['focus', 'collim'] : [];
+    if (k === 't') return more ? ['focus', 'collim', ...(rows[ri + 1].R ? ['centre'] : [])] : []; // (centre: the next optic's centre of curvature on the focus, as a caliball sits)
+    const para = rows[ri].type === 'paraxial'; // (an ideal lens: its focal length, not R or k)
     const optic =
-      ['R', 'k', 'd', 'tilt', 'tiltY', 'clock', 'n'].includes(k) &&
-      !(k === 'n' && rows[ri].type === 'mirror');
+      ['R', 'k', 'd', 'tilt', 'tiltY', 'clock', 'n', 'f'].includes(k) &&
+      !(k === 'n' && rows[ri].type === 'mirror') &&
+      (para ? !['R', 'k'].includes(k) : k !== 'f');
     if (!optic) return [];
     return more ? ['focus', 'collim'] : ['collim'];
   }
@@ -42,11 +44,15 @@
           }
           const i = ri - 1;
           const v0 = r[k] ?? 0;
-          const inv = k === 'R';
+          const inv = k === 'R' || k === 'f'; // (solved as curvature or power, so it can pass through flat or no power)
           const x0 = inv ? v0 && 1 / v0 : v0;
           const set = x => (r[k] = inv ? x && 1 / x : x);
           const g = S =>
-            sv.type === 'focus' ? 1 - r.t * curv(S, i, h) : a * curv(S, k === 't' ? i + 1 : i, h);
+            sv.type === 'centre'
+              ? centreOff(S, ri) / a
+              : sv.type === 'focus'
+                ? 1 - r.t * curv(S, i, h)
+                : a * curv(S, k === 't' ? i + 1 : i, h);
           let x = secant(x => (set(x), g(build(rows))), x0, Math.abs(x0) * 1e-3 || (inv ? 1e-6 : 1e-3));
           if (!inv && Math.abs(x - x0) > 1e6 * Math.max(1, a)) x = NaN; // "focus at infinity" and the like: no usable solution
           if (isFinite(x) && x !== x0) set(x);
@@ -221,6 +227,16 @@
   // {at: 'pt', p: [y, z]} a free point in the layout (in this surface's own space: dragged in the view), or {at: 'inf'}
   // infinity (F2 only: a paraboloid, k = −1, one equation). vary lists the row's values that may change to hold them: R (solved as curvature), k, d, tilt, t (the
   // distance out) and tin (the distance in, i.e. the previous row's t). Each pinned focus is two equations (y and z).
+  /** How far (mm, along the beam) surface ri's centre of curvature sits past the focus of the beam arriving at it: 0 for a
+   *  caliball (a sphere on the focus, which sends the light straight back). NaN when that beam is collimated. */
+  function centreOff(S, ri) {
+    const s = S[ri];
+    const F = inFocus(S, ri);
+    if (!s?.c || !F) return NaN;
+    const u = ri ? S[ri - 1].uOut : [0, 0, 1];
+    return dot(add(add(s.V, s.ez, 1 / s.c), F, -1), u);
+  }
+
   const VARY = ['R', 'k', 'd', 'tilt', 't', 'tin', 'tiltY', 'clock'];
 
   const vget = (rows, ri, k) =>
