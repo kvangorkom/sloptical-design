@@ -366,7 +366,7 @@ function render(g, M, o) {
         leadO: o,
       });
       if (!g.leads) leader(g, L, o);
-    } else if (o.labels) {
+    } else if (o.labels && labelled(i)) {
       // centred above the optic's upper end, kept inside the page
       const ends = labelEnds(s, o, M);
       const [x, y] = ends.reduce((a, b) => (b[1] <= a[1] ? b : a));
@@ -931,7 +931,7 @@ function placeLabels(g, M, o, D) {
   S.forEach((s, i) => {
     if (!D.inR(i)) return;
     const L = (out[i] = {});
-    if (o.labels) L.name = place(i, label(i), o.size, 'above');
+    if (o.labels && labelled(i)) L.name = place(i, label(i), o.size, 'above');
   });
   S.forEach((s, i) => {
     const q = AOIc[i];
@@ -949,7 +949,7 @@ function placeLabels(g, M, o, D) {
         const P = here.get(sys.rows[i + 1]?.id);
         if (!Dk.inR(i) || (P && Math.hypot(...P.map((v, n) => v - s.P[n])) < 1e-3)) return [];
         const e = { k: L.k };
-        if (o.labels) e.name = place(i, label(i), o.size, 'above');
+        if (o.labels && labelled(i)) e.name = place(i, label(i), o.size, 'above');
         const q = AOIc[i];
         if (o.aoi && q && (s.mirror || s.c || s.n !== s.nIn || s.tilt))
           e.aoi = place(i, aoiText(q), 0.9 * o.size, 'below');
