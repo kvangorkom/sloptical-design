@@ -1,5 +1,6 @@
 // zemax.js — Zemax OpticStudio interchange: export a .zmx lens file, and best-effort import of one. Also a system reversed
-// (reverseSystem), which places surfaces absolutely as the import does.
+// (reverseSystem), and placeRows, which re-describes surfaces placed absolutely (as the import and the reversal do) from
+// any starting point, direction and frame.
 
 (function engineZemax(Optics) {
   if (typeof module !== 'object') (Optics.SOURCES ??= []).push(String(engineZemax)); // (extensions' worker rebuilds the engine from these)
@@ -874,6 +875,84 @@
     };
   }
 
+  /** The frame with its origin at `origin`, z along `dir` and x along `x` made square to it (in a planar design, x is left
+   *  out; without `x`, y is taken across the beam in the y–z plane, as reverseSystem does). T maps a point into it, Td a
+   *  direction. */
+  function frameAt(origin, dir, x, D3) {
+    const w = unit(dir);
+    let Xn;
+    let Yn;
+    if (x) {
+      Xn = unit(add(x, w, -dot(x, w)));
+      Yn = cross(w, Xn);
+    } else {
+      Yn = Math.hypot(w[1], w[2]) > 1e-9 ? unit([0, w[2], -w[1]]) : unit(cross(w, [1, 0, 0]));
+      Xn = cross(Yn, w);
+    }
+    const Td = v => [D3 ? dot(v, Xn) : 0, dot(v, Yn), dot(v, w)];
+    const T = p => Td(add(p, origin, -1));
+    return { T, Td, X: Xn, Y: Yn, Z: w };
+  }
+
+  /** Built surface S[i] of a system with rows `rows`, to be met from the other side (the light on its way back): the same
+   *  optic in the same place, leading into the index before it. For placeRows. */
+  const facingBack = (s, rows, i) => ({
+    ...s,
+    n: s.mirror ? s.n : s.nIn,
+    abbe: s.mirror ? 0 : i ? rows[i].abbe || 0 : 0,
+    side: s.mirror ? s.side : -s.side,
+    ap: 0,
+  });
+
+  /** A plain plane through point p with normal ez (world), named `name`, for placeRows (in 3D, its x is the world x made
+   *  square to ez). */
+  function planeAt(p, ez, name, D3) {
+    const e = unit(ez);
+    const g = { V: p, ez: e, ey: [0, e[2], -e[1]], c: 0, k: 0, d: 0, zM: 0, n: 1, name, plain: true };
+    if (D3) {
+      const ex0 = add([1, 0, 0], e, -e[0]);
+      const ex = Math.hypot(...ex0) > 1e-9 ? unit(ex0) : unit(cross([0, 1, 0], e));
+      Object.assign(g, { ex, ey: cross(e, ex) });
+    }
+    return g;
+  }
+
+  /** Rows of this tool for surfaces placed absolutely: G is [[surface, row], …], each surface as build makes them (vertex
+   *  V, axis ez and ey (3D: ex too), curvature c, conic k, side, n, …) in any one frame, `row` extra values to keep (its
+   *  name and aperture). The axis ray starts at `origin` along `dir` (in that frame) and meets them in order; the new
+   *  design's frame has its pupil there, z along `dir` and x along `x` made square to it (default as frameAt). Each surface
+   *  becomes a row met by that ray (see placed): its off-axis height where the ray lands and its tilts from its axis, so
+   *  the optics stay exactly where they were. The pupil row gets ap, R (the incoming beam) and t; n is the index the light
+   *  starts in. Stops at a surface the ray misses (warned). Returns { rows (tidied), warnings, frame }. */
+  function placeRows(G, { origin = [0, 0, 0], dir = [0, 0, 1], x = null, D3, ap = 0, R = 0, n = 1 } = {}) {
+    const d3 = D3 ?? (!!x || G.some(([g]) => g.ex));
+    const frame = frameAt(origin, dir, x, d3);
+    const { T, Td } = frame;
+    const warnings = [];
+    const out = [{ t: 0, ap, R }];
+    let r = { p: [0, 0, 0], u: [0, 0, 1], n };
+    let fr = [
+      [1, 0, 0],
+      [0, 1, 0],
+    ];
+    for (const [g0, row = {}] of G) {
+      const ex0 = g0.ex ?? (d3 ? cross(g0.ey, g0.ez) : null);
+      const g = { ...g0, V: T(g0.V), ez: Td(g0.ez), ey: Td(g0.ey), ...(ex0 && { ex: Td(ex0) }) };
+      if (!d3) delete g.ex;
+      const h = hit(g, r);
+      if (!h) {
+        warnings.push(`the light misses ${row.name || g.name || 'a surface'}: the system stops there`);
+        break;
+      }
+      out.at(-1).t = dot(add(h.p, r.p, -1), r.u);
+      const pl = placed(g, r, h, d3, fr);
+      out.push({ name: row.name ?? g.name ?? '', ...pl.row, ...(row.ap && { ap: row.ap }) });
+      fr = pl.fr;
+      r = h;
+    }
+    return { rows: tidy(out), warnings, frame };
+  }
+
   /** The system run backwards: light from where it was imaged, through the same optics in the opposite order, to where it
    *  came from. The optics stay put (each surface's vertex, axis, curvature and conic), so every ray retraces its path; what
    *  changes is how they are described: the pupil moves to the exit pupil (where the chief rays leave from; its size the
@@ -923,10 +1002,7 @@
     }
     // the reversed frame: the pupil at E, z back along the beam
     const w = u0.map(v => -v);
-    const Yn = Math.hypot(w[1], w[2]) > 1e-9 ? unit([0, w[2], -w[1]]) : unit(cross(w, [1, 0, 0]));
-    const Xn = cross(Yn, w);
-    const T = p => [D3 ? dot(add(p, E, -1), Xn) : 0, dot(add(p, E, -1), Yn), dot(add(p, E, -1), w)];
-    const Td = v => [D3 ? dot(v, Xn) : 0, dot(v, Yn), dot(v, w)];
+    const { T, Td } = frameAt(E, w, null, D3);
     const round = v => (Math.abs(v) < 1e-12 ? 0 : +v.toPrecision(12));
     const fround = v => (Math.abs(v) < 1e-9 ? 0 : +v.toPrecision(9)); // (fields, as typed)
     // the source: the image, where the axis ray reaches the last surface when that is (near) the focus, else the focus
@@ -962,55 +1038,25 @@
     });
     if (nf.some(f => f === null)) warnings.push('some fields don’t reach the image: they are left out');
     // the optics, last to first, met from the other side
-    const nImg = last.nIn;
-    const out = [{ t: 0, ap: round(ap), R: round(R) }];
-    let r = { p: [0, 0, 0], u: [0, 0, 1], n: nImg };
-    let fr = [
-      [1, 0, 0],
-      [0, 1, 0],
-    ];
-    const turned = (s, i) => ({
-      ...s,
-      V: T(s.V),
-      ez: Td(s.ez),
-      ey: Td(s.ey),
-      ...(s.ex && { ex: Td(s.ex) }),
-      n: s.mirror ? s.n : s.nIn, // (into the index before it)
-      abbe: s.mirror ? 0 : i ? rows[i].abbe || 0 : 0,
-      side: s.mirror ? s.side : -s.side,
-      ap: 0,
-    });
-    const plane = (p, ez, name) => {
-      const ezw = Td(ez);
-      return { V: T(p), ez: ezw, ey: [0, ezw[2], -ezw[1]], c: 0, k: 0, d: 0, zM: 0, n: 1, name, plain: true };
-    };
     const G = [
       ...S.slice(0, n - 1)
-        .map((s, i) => [turned(s, i), rows[i + 1]])
+        .map((s, i) => [facingBack(s, rows, i), rows[i + 1]])
         .reverse(),
-      beam
-        ? [plane([0, 0, beam], [0, 0, 1], 'Image (the source)'), {}]
-        : [plane([0, 0, 0], [0, 0, 1], 'Pupil (where the light came in)'), {}],
+      [
+        planeAt(
+          beam ? [0, 0, beam] : [0, 0, 0],
+          [0, 0, 1],
+          beam ? 'Image (the source)' : 'Pupil (where the light came in)',
+          D3,
+        ),
+        {},
+      ],
     ];
-    if (G.at(-1)[0].ey && D3) {
-      const g = G.at(-1)[0];
-      const ex = Td([1, 0, 0]);
-      Object.assign(g, { ex, ey: cross(g.ez, ex) });
-    }
-    for (const [g, row] of G) {
-      const h = hit(g, r);
-      if (!h) {
-        warnings.push(
-          `the light misses ${row.name || g.name || 'a surface'} on the way back: the reversed system stops there`,
-        );
-        break;
-      }
-      out.at(-1).t = dot(add(h.p, r.p, -1), r.u);
-      const pl = placed(g, r, h, D3, fr);
-      out.push({ name: row.name ?? g.name ?? '', ...pl.row, ...(row.ap && { ap: row.ap }) });
-      fr = pl.fr;
-      r = h;
-    }
+    const placedOut = placeRows(G, { origin: E, dir: w, D3, ap: round(ap), R: round(R), n: last.nIn });
+    warnings.push(
+      ...placedOut.warnings.map(m => m.replace(': the system', ' on the way back: the reversed system')),
+    );
+    const out = placedOut.rows;
     // the pupil's size: so that its marginal ray meets the first optic where the original's left it
     const rmL = after(0, a, 0);
     if (rmL && out.length > 2) {
@@ -1032,6 +1078,16 @@
     return { rows: tidy(out), fields: nf.filter(f => f !== null), warnings };
   }
 
-  Object.assign(Optics, { zemax, decodeText, GLASS, fromZemax, reverseSystem });
+  Object.assign(Optics, {
+    zemax,
+    decodeText,
+    GLASS,
+    fromZemax,
+    reverseSystem,
+    placeRows,
+    facingBack,
+    planeAt,
+    frameAt,
+  });
   if (typeof module === 'object') module.exports = Optics;
 })(typeof module === 'object' ? require('./edit.js') : globalThis.Optics);
