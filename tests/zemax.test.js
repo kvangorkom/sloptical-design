@@ -184,6 +184,39 @@ describe('Zemax import: real OpticStudio files', () => {
     assert.deepEqual(sys.rows, rows(1));
   });
 
+  test('one surface or the other (IGNR in the editor; the saved one’s flag in the lens data, HIDE’s 6th field)', () => {
+    const ignr = [
+      'IGNR 2 1 0.0E+00 0 0 0 1 1 1 0 0 "" 0',
+      'IGNR 2 2 1.0E+00 0 0 0 1 1 1 0 0 "" 0',
+      'IGNR 3 1 1.0E+00 0 0 0 1 1 1 0 0 "" 0',
+      'IGNR 3 2 0.0E+00 0 0 0 1 1 1 0 0 "" 0',
+    ];
+    const file = ops =>
+      zmx(
+        ['MNUM 2 1', 'FLOA', 'FTYP 0 0 1 1', 'YFLN 0', ...ops],
+        [
+          ['DISZ INFINITY'],
+          ['COMM Lens', 'STOP', 'TYPE PARAXIAL', 'PARM 1 100', 'PARM 2 1', 'DISZ 40', 'DIAM 5'],
+          ['COMM Mirror A', 'CURV -2.5E-03', 'GLAS MIRROR', 'DISZ 0'],
+          ['COMM Mirror B', 'CURV -5.0E-03', 'GLAS MIRROR', 'HIDE 0 0 0 0 0 1 0 0 0 0 0 0', 'DISZ 0'],
+          ['COMM Back', 'DISZ -100'],
+          ['COMM Image'],
+        ],
+      );
+    const names = rows => rows.slice(1).map(r => r.name);
+    assert.deepEqual(
+      names(O.fromZemax(file([]), { configs: false }).rows),
+      ['Lens', 'Mirror A', 'Back', 'Image'],
+      'the saved configuration by the lens data alone',
+    );
+    const C = O.fromZemax(file(ignr)).configs;
+    assert.deepEqual(names(O.configRows({ configs: C }, 0)), ['Lens', 'Mirror A', 'Back', 'Image']);
+    const b = O.configRows({ configs: C }, 1);
+    assert.deepEqual(names(b), ['Lens', 'Mirror B', 'Back', 'Image']);
+    near(b[2].R, -200, 1e-9);
+    near(b[3].t, 100, 1e-9, 'one reflection: the image 100 back from the mirror');
+  });
+
   // A paraboloid reached through coordinate breaks and dummy surfaces, as optimisation leaves a file: a pivot break, a
   // hidden "optimize" dummy, the OAP, a break back, an unnamed dummy and a named focal plane.
   const oap = [

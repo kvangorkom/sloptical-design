@@ -542,16 +542,16 @@
   // ── Configurations (OpticStudio's multi-configuration editor). Each operand line is `OP int1 config value solve int2 …`:
   // int1 the surface (IGNM: the first of a range, int2 its last; PRAM: int2 the parameter), value as the editor shows it
   // (pickups already resolved). The lens data in the file is the saved configuration's.
-  /** The operands that change the surfaces, applied to the parsed surfaces Z for configuration k (IGNM is read by the
-   *  importer itself). */
-  const MCE_DONE = ['THIC', 'CRVT', 'CONN', 'PRAM', 'GLSS', 'MCOM', 'SDIA', 'IGNM', 'MOFF'];
+  /** The operands that change the surfaces, applied to the parsed surfaces Z for configuration k (IGNM and IGNR are read
+   *  by the importer itself). */
+  const MCE_DONE = ['THIC', 'CRVT', 'CONN', 'PRAM', 'GLSS', 'MCOM', 'SDIA', 'IGNM', 'IGNR', 'MOFF'];
   const quoted = a => /"([^"]*)"/.exec(a.join(' '))?.[1];
   function mceApply(head, Z, k) {
     const at = i => Z.find(z => z.i === i);
     const glassOf = name => Z.find(z => z.GLAS?.[0]?.[0] === name)?.GLAS[0]; // (another surface's record of it: its n_d, V_d)
     for (const op of MCE_DONE)
       for (const a of head[op] ?? []) {
-        if (+a[1] !== k || op === 'IGNM' || op === 'MOFF') continue;
+        if (+a[1] !== k || ['IGNM', 'IGNR', 'MOFF'].includes(op)) continue;
         const z = at(+a[0]);
         if (!z) continue;
         if (op === 'THIC') z.DISZ = [[a[2]]];
@@ -679,7 +679,7 @@
    *  Kept: radius, conic, spacings, coordinate breaks, mirrors, paraxial (ideal) lenses, glass indices and Abbe numbers,
    *  the stop, fields, wavelengths, the aperture and surface comments. Several configurations: all of them, as this tool's
    *  configurations (fromZemaxConfigs; `configs: false` for the saved one alone, `config: k` for configuration k alone),
-   *  each without the surfaces it ignores (IGNM in the multi-configuration editor). Ignored, with a warning where they
+   *  each without the surfaces it ignores (IGNM, IGNR in the multi-configuration editor). Ignored, with a warning where they
    *  occur: solves, aspheric and other higher-order terms, apertures, and (in a plane) anything out of it. plane: the
    *  file's global plane drawn as this tool's y–z plane: 'yz' (the default, as OpticStudio's Cross-Section layout; out of
    *  it: decenters in x, tilts about y), 'xz' (global x drawn as y; for systems folded in x–z), '3d', or 'auto' (the first
@@ -734,16 +734,20 @@
       (warn(`unknown units ${head.UNIT[0][0]}; read as mm`), 1);
     const num = (v, d = 0) => (v === undefined ? d : /^inf/i.test(v) ? Infinity : +v);
     const get = (z, k, j = 0) => num(z[k]?.[0]?.[j]);
-    // Configurations: the lens data is saved as the active one shows it, except the surfaces it ignores (IGNM in the
-    // multi-configuration editor), which are left out here as OpticStudio leaves them out of the trace (thickness and all).
+    // Configurations: the lens data is saved as the active one shows it. The surfaces a configuration ignores (the lens
+    // data's flag, HIDE's 6th field, as saved; IGNM, a range, and IGNR, one surface, in the multi-configuration editor)
+    // are left out here as OpticStudio leaves them out of the trace (thickness and all).
     const nConf = num(head.MNUM?.[0]?.[0], 1);
     const saved = num(head.MNUM?.[0]?.[1], 1) || 1;
     const conf = config ?? saved;
     if (conf < 1 || conf > nConf) throw Error(`no configuration ${conf}: the file has ${nConf}`);
     if (conf !== saved) mceApply(head, Z, conf);
-    const ignored = new Set();
-    for (const a of head.IGNM ?? [])
-      if (+a[1] === conf && +a[2]) for (let k = +a[0]; k <= Math.max(+a[0], +a[4] || 0); k++) ignored.add(k);
+    const ignored = new Set(Z.filter(z => z.HIDE?.[0]?.[5] === '1').map(z => z.i));
+    for (const op of ['IGNM', 'IGNR'])
+      for (const a of head[op] ?? [])
+        if (+a[1] === conf)
+          for (let k = +a[0]; k <= (op === 'IGNM' ? Math.max(+a[0], +a[4] || 0) : +a[0]); k++)
+            +a[2] ? ignored.add(k) : ignored.delete(k);
     if (nConf > 1 && config === undefined) {
       const cname = (head.MOFF ?? [])
         .map(a => a.join(' '))
