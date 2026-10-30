@@ -757,7 +757,7 @@ function placeLabels(g, M, o, D) {
     for (const sh of sys.shapes) {
       const P = Optics.isSolid(sh) ? Optics.hull2(SH.outline(sh).map(M)) : SH.outline(sh).map(M);
       if (P.length < 2) continue;
-      const E = sh.type === 'line' ? P : [...P, P[0]];
+      const E = sh.type === 'line' || Optics.isPart(sh) ? P : [...P, P[0]];
       for (let k = 1; k < E.length; k++) edges.push([E[k - 1], E[k]]);
     }
   }
@@ -1106,7 +1106,7 @@ function triad(g, c, ink, font) {
   ]
     .sort((p, q) => Optics.dot(p[1], b) - Optics.dot(q[1], b))
     .forEach(([n, a]) => {
-      const f = F3(a);
+      const f = F3(plD(a));
       const d = [Optics.dot(cam.r, f), -Optics.dot(cam.u, f)];
       const tip = [c[0] + 22 * d[0], c[1] + 22 * d[1]];
       g.line([c, tip], { color: col[n], width: 2, alpha: Optics.dot(a, b) < -0.2 ? 0.45 : 1 });

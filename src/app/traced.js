@@ -85,7 +85,7 @@ function sliceDir(s) {
   const b = viewDir();
   const ex = s.ex ?? Optics.cross(s.ey, s.ez);
   const w0 = Optics.cross(s.ez, b);
-  const w = Math.hypot(...w0) > 1e-3 ? w0 : F3(cam.u);
+  const w = Math.hypot(...w0) > 1e-3 ? w0 : unplD(F3(cam.u));
   const lx = Optics.dot(w, ex);
   const ly = Optics.dot(w, s.ey);
   const m = Math.hypot(lx, ly) || 1;
@@ -100,7 +100,7 @@ const across = u => {
   if (side && !u[0]) return [0, u[2], -u[1]];
   const e = Optics.cross(u, viewDir());
   const m = Math.hypot(...e);
-  return m > 1e-6 ? e.map(v => v / m) : Optics.cross(u, F3(cam.u));
+  return m > 1e-6 ? e.map(v => v / m) : Optics.cross(u, unplD(F3(cam.u)));
 };
 
 /** The images of every plane whose Images box is ticked (Optics.conjugates; real, plus virtual ones in object and image space): per image its row, the point on the axis,

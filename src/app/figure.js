@@ -143,11 +143,12 @@ function figure(o) {
   const hy = o.flipUD ? -1 : 1;
   const v1 = { s: 1, ox: 0, oy: 0, c: view?.c ?? [0, 0, 0], D: view?.D ?? 1e9 };
   const look = p => {
-    const q = View3D.project(cam, v1, F3(p));
+    const q = View3D.project(cam, v1, F3(pl(p)));
     return [q[0], -q[1]];
   }; // 3D: through the camera
   const pg = p => {
-    const [a, b] = d3 ? look(p) : [fz * p[2], fy * p[1]];
+    const q = pl(p);
+    const [a, b] = d3 ? look(p) : [fz * q[2], fy * q[1]];
     return [hx * (a * cs - b * sn), hy * (a * sn + b * cs)];
   }; // world → page [right, up] (mm)
   const Q = P.map(pg);

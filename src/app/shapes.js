@@ -1,7 +1,8 @@
 // shapes.js — shapes: rectangles, circles and lines sketched on the layout (world mm, fixed in place), drawn under everything with
 // their dimensions. sys.shapes: {type: 'rect', z, y, w, h, a} (centre, size, rotation in degrees CCW, default 0),
 // {type: 'circle', z, y, d}, {type: 'line', z, y, z2, y2}. Scripts can add 3D envelopes too ({type: 'box' | 'cylinder'}, see
-// src/engine/shapes.js): drawn as their silhouette and edges from any side, with their name; not picked or edited here. A selected rectangle or line has a rotation handle (a round knob
+// src/engine/shapes.js): drawn as their silhouette and edges from any side, with their name; not picked or edited here. And
+// parts of the instrument off the light path ({type: 'part'}, its surfaces placed in the world): drawn faded, as the optics. A selected rectangle or line has a rotation handle (a round knob
 // off the middle of its lower edge, or beside a line's middle) that turns it about its centre; Shift turns in 15° steps.
 const SH = {
   /** A point at local (u along the width, v along the height) of a rectangle rotated by its angle about its centre. */
@@ -12,7 +13,11 @@ const SH = {
     return [0, sh.y + u * s + v * c, sh.z + u * c - v * s];
   },
   outline: sh =>
-    Optics.isSolid(sh)
+    Optics.isBeam(sh)
+      ? [] // (light: not an outline to frame or measure)
+      : Optics.isPart(sh)
+      ? SH.partSurfaces(sh).flatMap(({ s, y0, y1 }) => Optics.profile(s, y0, y1))
+      : Optics.isSolid(sh)
       ? (SH.wire(sh)?.pts ?? [])
       : sh.type === 'rect'
         ? [
@@ -33,6 +38,8 @@ const SH = {
             ],
   /** A solid (box, cylinder) in the configuration shown: { c, pts, edges } in the world, or null when it isn't shown. */
   wire: sh => Optics.shapeWire(sh, sys.rows, S, sys.configs?.list?.[sys.configs.active]?.id ?? null),
+  /** A part's surfaces in the configuration shown ({ s, y0, y1 }, world). */
+  partSurfaces: sh => Optics.partSurfaces(sh, sys.configs?.list?.[sys.configs.active]?.id ?? null),
   centre: sh => (sh.type === 'line' ? [0, (sh.y + sh.y2) / 2, (sh.z + sh.z2) / 2] : [0, sh.y, sh.z]),
   /** The rotation knob (world): 22 px out from the middle of a rectangle's edge, or beside a line's middle, on the side lower
    *  on the screen (the size labels sit on the upper side); null for a circle. */
@@ -62,8 +69,83 @@ const SH = {
     const v = -dz * Math.sin(t) + dy * Math.cos(t);
     return Math.abs(u) <= sh.w / 2 && Math.abs(v) <= sh.h / 2;
   },
-  name: { rect: 'Rectangle', circle: 'Circle', line: 'Line', box: 'Box', cylinder: 'Cylinder' },
+  name: { rect: 'Rectangle', circle: 'Circle', line: 'Line', box: 'Box', cylinder: 'Cylinder', part: 'Part', beam: 'Beam' },
 };
+/** Another configuration's light (a `beam` shape), faded, as the cones are: each stretch filled between its stations (its
+ *  cross-sections at the ends and between, so a focus between them narrows it), all in one fill (no darker overlaps). */
+function drawBeam(g0, M, o, sh) {
+  if (!Optics.inConfig(sh, sys.configs?.list?.[sys.configs.active]?.id ?? null)) return;
+  const K = 6;
+  const polys = [];
+  for (const [A, B] of sh.stretches ?? []) {
+    const k = A.map((a, i) => (a && B[i] ? i : -1)).filter(i => i >= 0);
+    if (k.length < 3) continue;
+    const at = t => k.map(i => A[i].map((v, m) => v + (B[i][m] - v) * t));
+    for (let j = 0; j < K; j++) {
+      const H = Optics.hull2([...at(j / K), ...at((j + 1) / K)].map(M));
+      if (H.length > 2) polys.push(H);
+    }
+  }
+  if (polys.length)
+    fadePen(g0, o.partAlpha ?? 0.45, null).fill(polys, { color: sh.color || o.fc?.(0) || o.ink, alpha: o.coneAlpha ?? 0.3 });
+}
+/** A part off the light path, faded, drawn as the optics are: a plate's glass between its faces, a mirror's blank (or its
+ *  face), a refracting face's line (3D views: each face's rim). */
+function drawPart(g0, M, o, sh) {
+  const g = fadePen(g0, o.partAlpha ?? 0.45, null);
+  const L = SH.partSurfaces(sh);
+  const prof = ({ s, y0, y1 }) => Optics.profile(s, y0, y1);
+  if (o.d3) {
+    // as solids3 draws the optics: a solid's outline (its rims front and back) filled, and outlined; seen edge-on in a view
+    // along an axis, its section facing the viewer instead (the faces' curves, as in the planar layout)
+    const b = viewDir();
+    const flat = !!cam.name && !cam.persp;
+    const lw = o.lw.optic;
+    const F = L.map(({ s, y0, y1 }) => {
+      const f = { ...s, y0, y1 };
+      f.sl = slice3(f);
+      f.rim = Optics.rim(f, y0, y1);
+      return f;
+    });
+    const solid = (front, back, section, axis, fill, line) => {
+      const body = View3D.hull([...front, ...back].map(M));
+      const edge = flat && Math.abs(Optics.dot(axis, b)) < 0.3 && section.length > 2;
+      const out = edge ? section.map(M) : body;
+      g.fill(edge ? [body, out] : [body], { color: fill });
+      g.line([...out, out[0]], { color: line, width: 0.6 * lw });
+    };
+    const unit = v => v.map(x => x / (Math.hypot(...v) || 1));
+    for (let i = 0; i < F.length; i++) {
+      const f = F[i];
+      const n = F[i + 1];
+      if (f.mirror) {
+        const B = Optics.blankSolid(f, f.y0, f.y1, (f.y1 - f.y0) / 6, f.w3);
+        if (!o.blanks || !B.section.length) g.line([...B.front, B.front[0]].map(M), { color: roleLine(sh, o.ink), width: 0.6 * lw });
+        else solid(B.front, B.back, B.section, f.ez, roleFill(sh, o.blank), roleLine(sh, o.blankLine));
+      } else if (f.nOut > 1 && n && !n.mirror) {
+        solid(f.rim, n.rim, [...f.sl, ...n.sl.toReversed()], unit(n.P.map((v, k) => v - f.P[k])),
+          roleFill(sh, o.glass), roleLine(sh, o.glassLine));
+        i++;
+      } else g.line([...f.rim, f.rim[0]].map(M), { color: roleLine(sh, o.glassLine), width: 0.6 * lw });
+    }
+    return;
+  }
+  L.forEach((f, i) => {
+    if (!f.s.mirror && f.s.nOut > 1 && L[i + 1])
+      g.fill([[...prof(f), ...prof(L[i + 1]).toReversed()].map(M)], { color: roleFill(sh, o.glass) });
+  });
+  for (const f of L) {
+    const { s, y0, y1 } = f;
+    if (s.mirror && o.blanks)
+      g.fill([Optics.blank(s, y0, y1, (y1 - y0) / 6).map(M)], {
+        color: roleFill(sh, o.blank),
+        stroke: roleLine(sh, o.blankLine),
+        width: 0.7 * o.lw.optic,
+      });
+    else if (s.mirror) g.line(prof(f).map(M), { color: roleLine(sh, o.ink), width: 1.6 * o.lw.optic });
+    else g.line(prof(f).map(M), { color: roleLine(sh, o.glassLine), width: o.lw.optic });
+  }
+}
 /** Shapes with dimensions: a rectangle's width above it and height to its right, a circle's diameter, a line's length. */
 function drawShapes(g0, M, o, collect) {
   // collect: only list the dimension texts ({t, p, align, fs}), drawing nothing
@@ -75,8 +157,22 @@ function drawShapes(g0, M, o, collect) {
   const outlines = sys.shapes.map(sh =>
     Optics.isSolid(sh) ? Optics.hull2(SH.outline(sh).map(M)) : SH.outline(sh).map(M),
   );
+  for (const sh of sys.shapes) if (Optics.isBeam(sh)) drawBeam(g, M, o, sh); // (another configuration's light: under the rest)
   for (const [n, sh] of sys.shapes.entries()) {
     const P = outlines[n];
+    if (Optics.isBeam(sh)) continue;
+    if (Optics.isPart(sh)) {
+      // a part off the light path: faded, as the optics are, and its name above it
+      if (!P.length) continue;
+      drawPart(g, M, o, sh);
+      if (sh.name) {
+        const xs = P.map(p => p[0]);
+        const ys = P.map(p => p[1]);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+        lab(sh.name, [cx, Math.min(...ys) - 0.4 * fs], [cx, Math.max(...ys) + 1.1 * fs]);
+      }
+      continue;
+    }
     if (Optics.isSolid(sh)) {
       // a 3D envelope: its silhouette, filled, then its edges and its name
       if (P.length < 3) continue;
@@ -187,7 +283,7 @@ function drawShapes(g0, M, o, collect) {
   const segsOf = (P, closed) =>
     (closed ? [...P, P[0]] : P).slice(1).map((q, k) => [(closed ? [...P, P[0]] : P)[k], q]);
   const shapeSegs = sys.shapes.flatMap((sh, n) =>
-    outlines[n].length > 1 ? segsOf(outlines[n], sh.type !== 'line') : [],
+    outlines[n].length > 1 ? segsOf(outlines[n], sh.type !== 'line' && !Optics.isPart(sh)) : [],
   );
   const optSegs = o.place
     ? S.flatMap(s => segsOf((o.d3 ? [...(s.sl ?? []), ...rim3(s)] : s.prof).map(M), false))
@@ -246,7 +342,7 @@ function pickShape(mx, my) {
   };
   for (let k = sys.shapes.length - 1; k >= 0; k--) {
     const sh = sys.shapes[k];
-    if (Optics.isSolid(sh)) continue; // (scripts' envelopes aren't edited here)
+    if (Optics.isSolid(sh) || Optics.isPart(sh) || Optics.isBeam(sh)) continue; // (scripts' envelopes, parts, beams: not edited here)
     const P = SH.outline(sh).map(X);
     const E = sh.type === 'line' ? P : [...P, P[0]];
     if (E.some((p, i) => i && seg(E[i - 1], p) <= 6)) return { k, part: 'body' };

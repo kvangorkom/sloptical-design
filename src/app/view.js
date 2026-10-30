@@ -9,9 +9,34 @@ const SIDE = { ...View3D.VIEWS.side, name: 'side' };
 let cam = SIDE;
 let side = true; // side: the planar view (not orbited, orthographic)
 const F3 = p => [p[0], fy * p[1], fz * p[2]]; // world ↔ mirrored (its own inverse)
-const X = p =>
-  side ? [view.ox + fz * p[2] * view.s, view.oy - fy * p[1] * view.s] : View3D.project(cam, view, F3(p)); // world → screen
-const viewDir = () => F3(View3D.camBack(cam)); // world direction toward the viewer
+// The design placed in a common world (sys.place: {o, x, y, z}, its own frame's origin and axes there), so a sequence of
+// designs, each described from its own pupil, is drawn in one frame. Like the mirroring, only the drawing moves: pl / plD
+// take a design point / direction into the world drawn, unpl / unplD back.
+const placement = () => {
+  const P = sys?.place;
+  return P && [P.o, P.x, P.y, P.z].every(v => Array.isArray(v) && v.length === 3) ? P : null;
+};
+const plD = v => {
+  const P = placement();
+  return P ? [0, 1, 2].map(k => P.x[k] * v[0] + P.y[k] * v[1] + P.z[k] * v[2]) : v;
+};
+const pl = p => {
+  const P = placement();
+  return P ? plD(p).map((v, k) => v + P.o[k]) : p;
+};
+const unplD = v => {
+  const P = placement();
+  return P ? [P.x, P.y, P.z].map(a => a[0] * v[0] + a[1] * v[1] + a[2] * v[2]) : v;
+};
+const unpl = q => {
+  const P = placement();
+  return P ? unplD(q.map((v, k) => v - P.o[k])) : q;
+};
+const X = p => {
+  const q = pl(p);
+  return side ? [view.ox + fz * q[2] * view.s, view.oy - fy * q[1] * view.s] : View3D.project(cam, view, F3(q));
+}; // world → screen
+const viewDir = () => unplD(F3(View3D.camBack(cam))); // world direction toward the viewer
 
 /** The corners of the design's fixed extent (sys.extent: [[x0, y0, z0], [x1, y1, z1]], world mm), or null. A design that
  *  has one is framed by it, on screen and in figures, whatever is drawn: a sequence of designs (or configurations) then
@@ -19,8 +44,8 @@ const viewDir = () => F3(View3D.camBack(cam)); // world direction toward the vie
 const extentCorners = () => {
   const E = sys?.extent;
   if (!Array.isArray(E) || E.length !== 2 || !E.flat().every(Number.isFinite)) return null;
-  const [a, b] = E;
-  return [0, 1, 2, 3, 4, 5, 6, 7].map(k => [k & 1 ? b[0] : a[0], k & 2 ? b[1] : a[1], k & 4 ? b[2] : a[2]]);
+  const [a, b] = E; // (in the world drawn: with sys.place, the common one)
+  return [0, 1, 2, 3, 4, 5, 6, 7].map(k => unpl([k & 1 ? b[0] : a[0], k & 2 ? b[1] : a[1], k & 4 ? b[2] : a[2]]));
 };
 /** Everything drawn, as world points (for fitting the view); the fixed extent's corners when the design has one. */
 const drawn = () => {
@@ -43,6 +68,7 @@ function fit(P = drawn(), k = 0.88, c = cam) {
 function fitted(P, k, c) {
   const W = cv.clientWidth;
   const H = cv.clientHeight;
+  P = P.map(pl);
   const Q = P.map(F3);
   const lo = [0, 1, 2].map(i => Math.min(...Q.map(q => q[i])));
   const hi = [0, 1, 2].map(i => Math.max(...Q.map(q => q[i])));
@@ -67,8 +93,8 @@ function fitted(P, k, c) {
 function world(e, ref) {
   const x = e.offsetX ?? e[0];
   const y = e.offsetY ?? e[1];
-  if (side) return [0, (fy * (view.oy - y)) / view.s, (fz * (x - view.ox)) / view.s];
-  return F3(View3D.unproject(cam, view, [x, y], ref ? F3(ref) : view.c));
+  if (side) return unpl([0, (fy * (view.oy - y)) / view.s, (fz * (x - view.ox)) / view.s]);
+  return unpl(F3(View3D.unproject(cam, view, [x, y], ref ? F3(pl(ref)) : view.c)));
 }
 
 // ── Camera: named views (1 side, 2 top, 3 front; again for the opposite side), 4 a 3D view, 5 perspective, orbit by

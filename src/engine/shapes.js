@@ -12,6 +12,16 @@
 //                         beam's own (carried along the axis as everywhere in this tool). Without `at`: the world.
 //     only: [ids]         the configurations it belongs to (all when absent, or when the design has none)
 //     name                its label
+//   { type: 'part', surfaces: [{ s, y0, y1 }] }   a part of the instrument that is in place but off this configuration's
+//                       light path (another arm's optics, an optic installed but not reached yet): its surfaces as build
+//                       makes them (world: V, ex, ey, ez and the rest; c, k, d, segment fields), each with the span drawn
+//                       (segment coordinates y0…y1, as a row's own extent), in the light's order. Drawn faded, as the
+//                       optics are (a mirror's blank, a plate's faces and its glass); not traced, not edited. With
+//                       `only` and `name` (no `at`, `p` or `rot`: already in the world).
+//   { type: 'beam', stretches: [[A, B], …] }   light off this configuration's own path (another configuration's beam
+//                       through the parts in place): each stretch the beam's cross-sections where it leaves one surface (A)
+//                       and meets the next (B), the same rays round its edge (world points; null for a ray lost), drawn
+//                       faded as the cones are. With `only` (no `at`, `p` or `rot`).
 // A shape whose row is missing from the configuration shown isn't drawn.
 
 (function engineShapes(Optics) {
@@ -21,6 +31,8 @@
 
   const SOLID = new Set(['box', 'cylinder']);
   const isSolid = sh => SOLID.has(sh?.type);
+  const isPart = sh => sh?.type === 'part';
+  const isBeam = sh => sh?.type === 'beam';
 
   /** Rotation (columns: the turned x, y, z axes) about x by ax, then y by ay, then z by az (degrees, right-handed). */
   function turned([ax = 0, ay = 0, az = 0] = []) {
@@ -109,6 +121,9 @@
     return { c, pts: [...A, ...B], edges };
   }
 
+  /** A part's surfaces ({ s, y0, y1 }, world) in configuration cfg (an id; null: any), or none. */
+  const partSurfaces = (sh, cfg = null) => (isPart(sh) && inConfig(sh, cfg) ? (sh.surfaces ?? []) : []);
+
   /** Convex hull of 2D points (screen), counter-clockwise (Andrew's monotone chain): a solid's silhouette from any side. */
   function hull2(P) {
     const pts = [...P].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -127,6 +142,6 @@
     return [...lo.slice(0, -1), ...hi.slice(0, -1)];
   }
 
-  Object.assign(Optics, { isSolid, shapeFrame, shapeWire, hull2 });
+  Object.assign(Optics, { isSolid, isPart, isBeam, partSurfaces, inConfig, shapeFrame, shapeWire, hull2 });
   if (typeof module === 'object') module.exports = Optics;
 })(typeof module === 'object' ? require('./configs.js') : globalThis.Optics);
