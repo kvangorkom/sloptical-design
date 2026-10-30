@@ -567,6 +567,28 @@
         }
       }
   }
+  /** Curvatures solved from a thickness: OpticStudio's pickup of a radius from another surface's thickness column
+   *  (CURV c 0 p s 2: c = s / thickness; R = thickness / s, e.g. −2 × the distance from a focus for an OAP collimating
+   *  it). The file stores the relation's scale (s) and the value it last gave, but names the surface in a way not
+   *  documented; the surface is the one whose thickness gives exactly that value (p − 20 when several do). Returns
+   *  [{ z, from, k }]. */
+  function thicknessPickups(Z) {
+    const out = [];
+    for (const z of Z) {
+      const a = z.CURV?.[0];
+      const c = +a?.[0];
+      const k = +a?.[3];
+      if (!a || a[4] !== '2' || !c || !k || !+a[2]) continue;
+      const fits = Z.filter(q => {
+        const t = +q.DISZ?.[0]?.[0];
+        return t && Math.abs(k / t - c) <= 1e-9 * Math.abs(c);
+      });
+      const from = fits.length > 1 ? (fits.find(q => q.i === +a[2] - 20) ?? null) : fits[0];
+      if (from) out.push({ z, from, k });
+    }
+    return out;
+  }
+
   /** Operand lines of the multi-configuration editor: [op, its lines]. */
   const mceOps = (head, n) =>
     Object.entries(head).filter(
