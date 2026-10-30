@@ -1531,7 +1531,6 @@ body.viewer
   #fileMenu
   :is(
     [data-f='link'],
-    [data-f='rolink'],
     [data-f='watch'],
     [data-f='viewer'],
     [data-f='ext'],

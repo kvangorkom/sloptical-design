@@ -3,7 +3,7 @@
 // link puts the same in a link to the hosted page (after "#v=", packed as share.js packs designs). Anyone can open either
 // (the file needs no server or install; offline but for the web fonts) to look the system over: pan, zoom, orbit, hover the
 // optics and the beam, pin and dock popups (values, footprints, spots, WFE, fringes, a double pass's way back), the watch
-// window, the figure export. Nothing in it changes the system: no table edits, drags, inserts, solves, examples, files or
+// window, the figure export, a read-only link to it as the view is now. Nothing in it changes the system: no table edits, drags, inserts, solves, examples, files or
 // extensions, and it stores nothing (so it can't touch the app's own designs or settings on the same site).
 // One page or link per state of a system (a step of an alignment plan, say); each is self-contained, and the viewerData
 // block is plain JSON, so pages can be made from designs by a script as well.
@@ -46,13 +46,14 @@ async function viewerHTML(data) {
   );
 }
 
+let viewerAt = null; // (a read-only page: when its design was taken, kept by a link copied from it)
 /** What a read-only page shows: the open design as it is now (its layout, view, docked and pinned popups, watch window). */
 function viewerData() {
   const pinned = [...docks, ...(hov.pinned && hov.tgt ? [hov] : [])];
   return {
     v: 1,
     name: file.name.replace(/\.json$/i, ''),
-    at: new Date().toISOString(),
+    at: viewerAt ?? new Date().toISOString(),
     sys: JSON.parse(JSON.stringify(sys)),
     view: view && { ...view, cam },
     size: [cv.clientWidth, cv.clientHeight],
@@ -113,6 +114,7 @@ function viewerBoot() {
  *  that would change it taken away, the view and popups as they were exported. */
 function viewerStart(D) {
   document.body.classList.add('viewer');
+  viewerAt = D.at ?? null;
   document.title = `${D.name} · Sloptical Design (read-only)`;
   const b = $('roBadge');
   b.hidden = false;
