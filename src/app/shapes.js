@@ -174,15 +174,16 @@ function drawShapes(g0, M, o, collect) {
       continue;
     }
     if (Optics.isSolid(sh)) {
-      // a 3D envelope: its silhouette, filled, then its edges and its name
+      // a 3D envelope: its silhouette, filled, then its edges and its name (faded: as a part is)
       if (P.length < 3) continue;
-      g.fill([P], {
+      const gs = sh.faded && !collect ? fadePen(g, o.partAlpha ?? 0.45, null) : g;
+      gs.fill([P], {
         color: roleFill(sh, o.shape),
         stroke: roleLine(sh, o.shapeLine),
         width: 0.7 * o.lw.optic,
       });
       for (const [a, b] of SH.wire(sh).edges)
-        g.line([M(a), M(b)], { color: roleLine(sh, o.shapeLine), width: 0.5 * o.lw.optic, alpha: 0.6 });
+        gs.line([M(a), M(b)], { color: roleLine(sh, o.shapeLine), width: 0.5 * o.lw.optic, alpha: 0.6 });
       if (sh.name) {
         const xs = P.map(p => p[0]);
         const ys = P.map(p => p[1]);

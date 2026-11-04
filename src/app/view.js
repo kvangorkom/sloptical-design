@@ -11,9 +11,10 @@ let side = true; // side: the planar view (not orbited, orthographic)
 const F3 = p => [p[0], fy * p[1], fz * p[2]]; // world ↔ mirrored (its own inverse)
 // The design placed in a common world (sys.place: {o, x, y, z}, its own frame's origin and axes there), so a sequence of
 // designs, each described from its own pupil, is drawn in one frame. Like the mirroring, only the drawing moves: pl / plD
-// take a design point / direction into the world drawn, unpl / unplD back.
+// take a design point / direction into the world drawn, unpl / unplD back. A configuration may have a place of its own
+// (sys.configs.list[k].place: one described from another pupil, light run the other way, say).
 const placement = () => {
-  const P = sys?.place;
+  const P = sys?.configs?.list?.[sys.configs.active]?.place ?? sys?.place;
   return P && [P.o, P.x, P.y, P.z].every(v => Array.isArray(v) && v.length === 3) ? P : null;
 };
 const plD = v => {
