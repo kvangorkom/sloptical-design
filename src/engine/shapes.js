@@ -12,6 +12,7 @@
 //                         beam's own (carried along the axis as everywhere in this tool). Without `at`: the world.
 //     only: [ids]         the configurations it belongs to (all when absent, or when the design has none)
 //     name                its label
+//     faded               drawn faded, as a part is (equipment left on the bench, off this configuration's light)
 //   { type: 'part', surfaces: [{ s, y0, y1 }] }   a part of the instrument that is in place but off this configuration's
 //                       light path (another arm's optics, an optic installed but not reached yet): its surfaces as build
 //                       makes them (world: V, ex, ey, ez and the rest; c, k, d, segment fields), each with the span drawn
