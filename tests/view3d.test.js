@@ -291,6 +291,22 @@ describe('outlines', () => {
     assert.ok(Math.min(...last.map(w)) < 0.25 * Math.max(...last.map(w)), 'narrow near the focus');
     assert.deepEqual(View.beamHulls([null, null], M), []);
   });
+  test('beamHulls: with every ray’s ends, the outline of the edge rays follows a curved optic to its vertex', () => {
+    const M = p => [p[2], p[1]];
+    const edge = [-1, 1].map(y => [
+      [0, y, 0],
+      [0, y, 10],
+    ]); // the beam's edge rays, ending on a mirror's rim
+    const vertex = [12, 0]; // where its centre ray ends, on the screen
+    const inside = (h, [x, y]) =>
+      h.every((p, i) => {
+        const q = h[(i + 1) % h.length];
+        return (q[0] - p[0]) * (y - p[1]) - (q[1] - p[1]) * (x - p[0]) >= -1e-9;
+      });
+    const reach = ends => View.beamHulls(edge, M, 4, 1, undefined, ends).some(h => inside(h, [11.5, 0]));
+    assert.ok(!reach(), 'the edge rays alone stop flat across the rim');
+    assert.ok(reach([[[0, 0]], [vertex]]));
+  });
   test('beamHulls: a focus between stations pinches to its point, not bridged by a piece across it', () => {
     const M = p => [p[2], p[1]];
     const f = 53.7;

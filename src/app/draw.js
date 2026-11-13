@@ -147,18 +147,39 @@ const ring = ([x, y], r, n = 24) =>
     y + r * Math.sin((2 * Math.PI * i) / n),
   ]);
 
+/** The other wavelengths (BW) to draw in range D, each with its own range: from the surface where its light parts from
+ *  the primary's (so the shared path keeps the fields' colours). */
+const otherWaves = D =>
+  BW.filter(w => w.from >= 0 && w.from <= D.b).map(w => ({ w, D: drawRange([Math.max(D.a, w.from), D.b]) }));
+/** Their ray fans for fields fw, each in its wavelength's colour: [{ j, rs, col, D }]. Drawn with the primary's rays. */
+const otherRays = (fw, D) =>
+  otherWaves(D).flatMap(({ w, D }) => fw.flatMap(j => w.T[j].map(rs => ({ j, rs, col: lamCol(w.l), D }))));
+/** The beams drawn as cones, in groups that share a range: fields fw at the primary wavelength in their own colours, then
+ *  at each other wavelength in its colour. Each: { j, col, S (its surfaces), C (its cone fan), D }. */
+const coneBeams = (o, D, fw) => [
+  fw.map(j => ({ j, col: o.fc(j), S, C: C[j], D })),
+  ...otherWaves(D).map(({ w, D }) => fw.map(j => ({ j, col: lamCol(w.l), S: w.S, C: w.C[j], D }))),
+];
+/** A beam's cone fan as drawn points (see coneShape), through map M. */
+const conePts = (b, M) => (b.C ?? []).map(r => r && b.D.cone(sys.fields[b.j], r).map(M));
+
 /** What to draw of the system: surfaces a…b (a = −1: from the pupil, and the source), the rays between them, and the images
- *  of planes on the segments between them. Default (no range): everything. Used by render() and the figure's page fit. */
+ *  of planes on the segments between them. Default (no range): everything. Used by render() and the figure's page fit.
+ *  A pupil that lies beyond the first surface (its distance out negative, as an imported stop inside the system is) isn't
+ *  where the light starts: the rays are then drawn from the first surface on. */
 function drawRange(range) {
   const n = S.length;
+  const v = sys.rows[0].t < 0 ? 1 : 0; // (the points to leave out: the pupil's)
   const a = Math.max(-1, Math.min(range?.[0] ?? -1, n - 1));
   const b = Math.max(a, Math.min(range?.[1] ?? n - 1, n - 1));
   const inR = i => i >= a && i <= b;
   const ray = (f, rs) =>
-    a < 0 ? [...src(f), ...rs.slice(0, b + 2)].map(q => q.p ?? q) : rs.slice(a + 1, b + 2).map(q => q.p); // rs: [start, after S0, …]
+    a < 0
+      ? [...(v ? [] : src(f)), ...rs.slice(v, b + 2)].map(q => q.p ?? q)
+      : rs.slice(a + 1, b + 2).map(q => q.p); // rs: [start, after S0, …]
   const cone = (f, r) => {
     const k = src(f).length;
-    return a < 0 ? r.slice(0, k + b + 2) : r.slice(k + a + 1, k + b + 2);
+    return a < 0 ? r.slice(v && k + 1, k + b + 2) : r.slice(k + a + 1, k + b + 2);
   }; // r: [...src, start, S0, …]
   const segIn = j => (j === 0 ? a < 0 : j - 1 >= a) && (j === n ? b === n - 1 : j <= b); // segment j runs from S[j−1] (the pupil) to S[j]
   const conj = c => segIn(c.j);
@@ -323,13 +344,14 @@ function render(g, M, o) {
     if (o.beam !== 'rays') {
       if (o.coneLayer) o.coneLayer();
       else
-        fw.forEach(j =>
-          g.fill(coneShape(C[j].map(r => r && D.cone(sys.fields[j], r).map(M))), {
-            color: o.fc(j),
-            alpha: o.coneAlpha,
-          }),
-        );
-    } // one nonzero fill per field
+        for (const b of coneBeams(o, D, fw).flat())
+          g.fill(coneShape(conePts(b, M)), { color: b.col, alpha: o.coneAlpha });
+    } // one nonzero fill per field (and per other wavelength)
+    if (o.beam !== 'cones')
+      for (const { j, rs, col, D: Dr } of otherRays(fw, D)) {
+        const P = Dr.ray(sys.fields[j], rs);
+        if (P.length > 1) g.line(P.map(M), { color: col, width: o.lw.ray, alpha: o.rayAlpha });
+      }
     if (o.beam !== 'cones')
       fw.forEach(j =>
         T[j].forEach(rs => {
@@ -588,78 +610,80 @@ function solids3(g, M, o, D) {
   // painted into a layer laid down translucent. (The figure, for the PDF, mixes by plain transparency.) Each stretch is
   // painted whole, so where the beam meets an optic the stretches in and out overlap over its whole footprint.
   if (o.beam !== 'rays') {
-    const Rs = fw.map(j => ringC()[j].map(r => r && D.cone(sys.fields[j], r)));
-    const Ls = Rs.map(R => R.filter(Boolean));
-    const ok = Ls.filter(L => L.length);
-    const m = ok.length ? Math.min(...ok.map(L => Math.min(...L.map(r => r.length)))) : 0;
-    let P2 = null;
-    const flat = () => (P2 ??= Rs.map(R => R.map(r => r && r.map(M)))); // (orthographic: each ray point mapped once a frame)
-    const steps = cone.moving ? 8 : 16; // (fewer stations while the view moves)
-    for (let k = 1; k < m; k++) {
-      let P = null;
-      const polys = () =>
-        (P ??= fw.map((j, q) => {
-          const L = Ls[q];
-          if (!L.length) return null;
-          const F = cam.persp ? null : flat()[q];
-          const use = edgeRays(j, k, Rs[q]);
-          const pick = A => A.map((r, n) => (use.has(n) ? r : null));
-          const R = pick(Rs[q]);
-          const F2 = F && pick(F);
-          return View3D.beamHulls(R, M, steps, k, F2);
-        }));
-      const paint = (pen, alpha) =>
-        polys().forEach((_, n) => {
-          const q = fw.length - 1 - n;
-          if (P[q]) pen.fill(P[q], { color: o.fc(fw[q]), alpha, blend: mix.blend });
+    coneBeams(o, D, fw).forEach((bs, gi) => {
+      const Rs = bs.map(b => withS(b.S, () => ringC()[b.j].map(r => r && b.D.cone(sys.fields[b.j], r))));
+      const Ls = Rs.map(R => R.filter(Boolean));
+      const ok = Ls.filter(L => L.length);
+      const m = ok.length ? Math.min(...ok.map(L => Math.min(...L.map(r => r.length)))) : 0;
+      let P2 = null;
+      const flat = () => (P2 ??= Rs.map(R => R.map(r => r && r.map(M)))); // (orthographic: each ray point mapped once a frame)
+      const steps = cone.moving ? 8 : 16; // (fewer stations while the view moves)
+      for (let k = 1; k < m; k++) {
+        let P = null;
+        const polys = () =>
+          (P ??= bs.map((b, q) => {
+            const L = Ls[q];
+            if (!L.length) return null;
+            const F = cam.persp ? null : flat()[q];
+            const use = withS(b.S, () => edgeRays(b.j, k, Rs[q]));
+            const pick = A => A.map((r, n) => (use.has(n) ? r : null));
+            const R = pick(Rs[q]);
+            const F2 = F && pick(F);
+            const ends = [k - 1, k].map(n => (F ? F.filter(Boolean).map(r => r[n]) : L.map(r => M(r[n])))); // (every ray's)
+            return View3D.beamHulls(R, M, steps, k, F2, ends);
+          }));
+        const paint = (pen, alpha) =>
+          polys().forEach((_, n) => {
+            const q = bs.length - 1 - n;
+            if (P[q]) pen.fill(P[q], { color: bs[q].col, alpha, blend: mix.blend });
+          });
+        items.push([
+          mean(ok.flatMap(L => L.flatMap(r => [r[k - 1], r[k]]))),
+          () => paint(g, mix.alpha),
+          { polys, paint },
+        ]);
+      }
+      // the incoming beam's flat face where it starts (the pupil): outlined, so it reads apart from the bundle's sides
+      if (!gi)
+        fw.forEach((j, q) => {
+          const E = Rs[q].filter(Boolean).map(r => r[0]);
+          if (E.length < 3) return;
+          const c = [0, 1, 2].map(k => E.reduce((t, p) => t + p[k], 0) / E.length);
+          if (
+            Math.max(...E.map(p => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]))) <
+            1e-6 * (1 + sys.rows[0].ap)
+          )
+            return; // (a point source: no face)
+          items.push([
+            mean(E),
+            () => {
+              const h = View3D.hull(E.map(M)); // (its rim: the face is flat, so its outline on screen is the hull of its points)
+              g.line([...h, h[0]], { color: o.fc(j), width: 1, alpha: 0.9 });
+            },
+          ]);
         });
-      items.push([
-        mean(ok.flatMap(L => L.flatMap(r => [r[k - 1], r[k]]))),
-        () => paint(g, mix.alpha),
-        { polys, paint },
-      ]);
-    }
-    // the incoming beam's flat face where it starts (the pupil): outlined, so it reads apart from the bundle's sides
-    fw.forEach((j, q) => {
-      const E = Rs[q].filter(Boolean).map(r => r[0]);
-      if (E.length < 3) return;
-      const c = [0, 1, 2].map(k => E.reduce((t, p) => t + p[k], 0) / E.length);
-      if (
-        Math.max(...E.map(p => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]))) <
-        1e-6 * (1 + sys.rows[0].ap)
-      )
-        return; // (a point source: no face)
-      items.push([
-        mean(E),
-        () => {
-          const h = View3D.hull(E.map(M)); // (its rim: the face is flat, so its outline on screen is the hull of its points)
-          g.line([...h, h[0]], { color: o.fc(j), width: 1, alpha: 0.9 });
-        },
-      ]);
     });
   }
-  if (o.beam !== 'cones')
-    fw.forEach(j =>
-      [...T[j], ...fanX()[j]].forEach(rs => {
-        const P = D.ray(sys.fields[j], rs);
-        const Q = cam.persp ? null : P.map(M);
-        const d = P.map(dep);
-        for (let k = 1; k < P.length; k++)
-          for (let h = 0; h < 4; h++) {
-            // each stretch in 4 pieces (orthographic: mapped once, split on the screen)
-            const at = t =>
-              Q
-                ? [Q[k - 1][0] + (Q[k][0] - Q[k - 1][0]) * t, Q[k - 1][1] + (Q[k][1] - Q[k - 1][1]) * t]
-                : M(P[k - 1].map((v, n) => v + (P[k][n] - v) * t));
-            items.push([
-              d[k - 1] + ((d[k] - d[k - 1]) * (h + 0.5)) / 4,
-              null,
-              null,
-              { j, seg: [at(h / 4), at((h + 1) / 4)] },
-            ]);
-          }
-      }),
-    );
+  const rays = fw.flatMap(j => [...T[j], ...fanX()[j]].map(rs => ({ j, rs, D })));
+  for (const { j, rs, col, D: Dr } of o.beam !== 'cones' ? [...otherRays(fw, D), ...rays] : []) {
+    const P = Dr.ray(sys.fields[j], rs);
+    const Q = cam.persp ? null : P.map(M);
+    const d = P.map(dep);
+    for (let k = 1; k < P.length; k++)
+      for (let h = 0; h < 4; h++) {
+        // each stretch in 4 pieces (orthographic: mapped once, split on the screen)
+        const at = t =>
+          Q
+            ? [Q[k - 1][0] + (Q[k][0] - Q[k - 1][0]) * t, Q[k - 1][1] + (Q[k][1] - Q[k - 1][1]) * t]
+            : M(P[k - 1].map((v, n) => v + (P[k][n] - v) * t));
+        items.push([
+          d[k - 1] + ((d[k] - d[k - 1]) * (h + 0.5)) / 4,
+          null,
+          null,
+          { col: col ?? o.fc(j), seg: [at(h / 4), at((h + 1) / 4)] },
+        ]);
+      }
+  }
   if (o.conj) for (const c of CJ) if (D.conj(c)) items.push([dep(c.p), () => conjBar(g, M, o, c)]);
   // Back to front. With a mixing style the cones go into one layer, laid down once over everything at the end (a layer per
   // stretch costs a pass each, which is what slowed views with many optics): each optic, as it is drawn on the canvas, also
@@ -667,16 +691,16 @@ function solids3(g, M, o, D) {
   const S2 = items.sort((p, q) => p[0] - q[0]);
   const layered = mix.layer && g.layer;
   const ops = [];
-  let batch = null; // ray pieces in a row of one field's colour: one stroke
+  let batch = null; // ray pieces in a row of one colour (a field's, or another wavelength's): one stroke
   const flush = () => {
-    if (batch) g.segs(batch.segs, { color: o.fc(batch.j), width: o.lw.ray, alpha: o.rayAlpha });
+    if (batch) g.segs(batch.segs, { color: batch.col, width: o.lw.ray, alpha: o.rayAlpha });
     batch = null;
   };
   for (const [, f, cone, ray] of S2) {
     if (ray) {
-      if (batch?.j !== ray.j) {
+      if (batch?.col !== ray.col) {
         flush();
-        batch = { j: ray.j, segs: [] };
+        batch = { col: ray.col, segs: [] };
       }
       batch.segs.push(ray.seg);
       continue;
@@ -1197,13 +1221,12 @@ function coneLayer(o, W, H, dpr) {
     g.clearRect(-m * W, -m * H, cw, ch);
     const pen = canvasPen(g);
     const fs = x ? o.fields.toReversed() : o.fields; // (File ▸ Options can mix them in this view too: first field painted last)
-    fs.forEach(j =>
-      pen.fill(coneShape(C[j].map(q => q && D.cone(sys.fields[j], q).map(X))), {
-        color: o.fc(j),
+    for (const b of coneBeams(o, D, fs).flat())
+      pen.fill(coneShape(conePts(b, X)), {
+        color: b.col,
         alpha: !x ? o.coneAlpha : x.layer ? 1 : x.alpha,
         blend: x?.blend,
-      }),
-    );
+      });
     Object.assign(cone, { key, C, snap: { s: view.s, ox: view.ox, oy: view.oy, m, r } });
   }
   const { s, ox, oy, m, r } = cone.snap;

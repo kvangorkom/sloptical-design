@@ -50,7 +50,7 @@ function importZmx(txt, name, plane = 'auto', flip = {}) {
     hint +
     `<p>The pupil is at the entrance pupil, ${nf(Math.abs(P.t))} mm ${P.t >= 0 ? 'before' : 'after'} the first surface, semi-diameter ${nf(P.ap)} mm; ` +
     `${P.R ? `the beam comes from the object point ${nf(-P.R)} mm before it` : 'the beam is collimated'}. Fields ${im.fields.map(fl).join(', ')}, λ ${(im.lambdas ?? [im.lambda]).join(', ')} µm.</p>` +
-    `<p>Solves and apertures are not imported; glasses are modelled by their index and Abbe number at the d line.</p>` +
+    `<p>Solves and round apertures are not imported (rectangular ones are); glasses are modelled by their index and Abbe number at the d line.</p>` +
     (im.warnings.length ? `<p>Also note:</p><ul>${im.warnings.map(li).join('')}</ul>` : '');
   if (!$('zinDlg').open) $('zinDlg').showModal();
 }

@@ -94,8 +94,10 @@
    *  in space and as drawn (each a least-squares minimum, the rays being straight), so a focus inside a stretch pinches to a
    *  point instead of being bridged by a piece across it. rays: world point lists or null. With `stretch`, only that one (1…).
    *  With `flat` (the rays' points already mapped by M, when M is affine: an orthographic view), stations are interpolated
-   *  on the screen instead of being mapped one by one, which is exact and much faster. */
-  function beamHulls(rays, M, steps = 24, stretch, flat) {
+   *  on the screen instead of being mapped one by one, which is exact and much faster. ends: [screen points where the stretch
+   *  starts, where it ends], more than these rays' own (every ray's, when `rays` are only the beam's edge): the outline then
+   *  reaches them too, so it follows a curved optic to its vertex instead of stopping flat across its rim. */
+  function beamHulls(rays, M, steps = 24, stretch, flat, ends) {
     const keep = rays.map(Boolean);
     const R = rays.filter(Boolean);
     const F = flat && flat.filter((_, k) => keep[k]);
@@ -139,9 +141,9 @@
             .concat([narrowest(A, B), narrowest(A2, B2)].filter(t => t > 0 && t < 1)),
         ),
       ].sort((x, y) => x - y);
-      let prev = hull(at(ts[0])); // (each station's outline once: a piece is the hull of two)
+      let prev = hull([...at(ts[0]), ...(ends?.[0] ?? [])]); // (each station's outline once: a piece is the hull of two)
       for (const t of ts.slice(1)) {
-        const cur = hull(at(t));
+        const cur = hull(t === 1 && ends ? [...at(t), ...ends[1]] : at(t));
         const h = hull([...prev, ...cur]);
         if (h.length > 2) out.push(h);
         prev = cur;

@@ -154,27 +154,39 @@
       .filter(q => q.every(isFinite))
       .map(q => add(s.V, toW(s, q)));
 
-  /** World points round a surface's rim: the circle of radius (y1 − y0)/2 about the middle of the segment span y0…y1. */
+  /** World points round a surface's rim: the circle of radius (y1 − y0)/2 about the middle of the segment span y0…y1, or,
+   *  for a rectangular aperture (s.apX, its half-width along x), the rectangle of that span in y (m/4 points a side). */
   const rim = (s, y0, y1, m = 48) => {
     const c = (y0 + y1) / 2;
     const a = (y1 - y0) / 2;
+    const b = s.apX;
+    const side = i => ((i % (m / 4)) / (m / 4)) * 2 - 1; // −1 … 1 along a side
+    const at =
+      b > 0
+        ? i =>
+            [
+              [b, a * side(i)],
+              [-b * side(i), a],
+              [-b, -a * side(i)],
+              [b * side(i), -a],
+            ][Math.floor((4 * i) / m)]
+        : i => [a * Math.cos((2 * Math.PI * i) / m), a * Math.sin((2 * Math.PI * i) / m)];
     return onSurf(
       s,
-      Array.from({ length: m }, (_, i) => [
-        a * Math.cos((2 * Math.PI * i) / m),
-        c + a * Math.sin((2 * Math.PI * i) / m),
-      ]),
+      Array.from({ length: m }, (_, i) => [at(i)[0], c + at(i)[1]]),
     );
   };
 
-  /** World points along the surface across that circle in local direction w = [wx, wy] (unit; [0, 1] is the meridian). */
+  /** World points along the surface across that circle (or rectangle) in local direction w = [wx, wy] (unit; [0, 1] is the
+   *  meridian). */
   const slice = (s, y0, y1, w, m = 48) => {
     const c = (y0 + y1) / 2;
     const a = (y1 - y0) / 2;
+    const h = s.apX > 0 ? Math.min(s.apX / Math.abs(w[0]), a / Math.abs(w[1])) : a; // (to the rectangle's edge that way)
     return onSurf(
       s,
       Array.from({ length: m }, (_, i) => {
-        const t = -a + (2 * a * i) / (m - 1);
+        const t = -h + (2 * h * i) / (m - 1);
         return [t * w[0], c + t * w[1]];
       }),
     );

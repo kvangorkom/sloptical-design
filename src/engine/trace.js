@@ -18,7 +18,9 @@
 //     can reach. Such a segment is described from its own tangent plane rather than the parent's (see segPoint).
 //   • Sag z = c r² / (1 + √(1 − (1+k) c² r²)), c = 1/R (R=0 ⇒ flat). R>0 puts the centre of curvature
 //     downstream of the incoming light (Zemax convention while light travels +z).
-//   • `n` is the index after a refracting surface. Mirrors keep the index. `ap` > 0 vignettes rays.
+//   • `n` is the index after a refracting surface. Mirrors keep the index. `ap` > 0 vignettes rays: a round aperture of
+//     that radius about the segment centre, or with `apX` > 0 a rectangular one, half-widths apX along the surface's x
+//     and ap along its y.
 //   • A `paraxial` surface is an ideal thin lens of focal length `f` (in air; 0: no power), flat whatever its R: a ray's
 //     slopes across it (its direction tangents, in the surface's frame) change as n′·tan′ = n·tan − h/f (h its height there),
 //     as OpticStudio's Paraxial surface does, so a collimated beam at any angle focuses perfectly on the focal plane. The path
@@ -59,12 +61,14 @@
     sag,
   } = Optics;
 
-  /** Whether a design uses the third dimension (a tiltY or clock, or a lock that varies one or pins a 3D point). */
+  /** Whether a design uses the third dimension (a tiltY or clock, a grating whose turned grooves send the light out of the
+   *  plane, or a lock that varies one or pins a 3D point). */
   const is3D = rows =>
     rows.some(
       r =>
         r.tiltY ||
         r.clock ||
+        (r.lines && r.groove) ||
         ['tiltY', 'clock'].some(k => r.lock?.vary?.includes(k)) ||
         [r.lock?.f1, r.lock?.f2].some(t => t?.p?.length === 3),
     );
@@ -88,7 +92,8 @@
     const τ = ts.reduce((a, b) => (far(b) < far(a) ? b : a));
     const L = add(P, D, τ);
     const loc = s.seg ? [L[0], (L[1] - s.d) * s.tg[1] + (L[2] - s.zM) * s.tg[2]] : [L[0], L[1] - s.d];
-    if ((s.ap > 0 && Math.hypot(...loc) > s.ap) || !isFinite(L[2])) return null;
+    const out = s.apX > 0 ? Math.abs(loc[0]) > s.apX || Math.abs(loc[1]) > s.ap : Math.hypot(...loc) > s.ap;
+    if ((s.ap > 0 && out) || !isFinite(L[2])) return null;
     if (s.para) return lens(s, L, D, n, opl + n * τ, loc, back);
     let N = unit([c * L[0], c * L[1], c * K * L[2] - 1]);
     let cos = -dot(D, N);

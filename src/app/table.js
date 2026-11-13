@@ -4,7 +4,7 @@ function renderTable() {
   hideLock();
   const num = (i, k, v) =>
     `<td${k === 'f' ? ` title="${FTIP}"` : ''}><input class="num" data-k="${k}" inputmode="decimal" autocomplete="off" value="${show(k, v)}"` +
-    ` aria-label="${k} of ${i ? 'S' + i : 'pupil'}"${k === 'ap' ? ' placeholder="auto"' : ''}>${k === 'tilt' ? '<span class="piv"></span>' : k === 'd' ? '<span class="piv oa"></span>' : ''}</td>`;
+    ` aria-label="${k} of ${i ? 'S' + i : 'pupil'}"${k === 'ap' ? ' placeholder="auto"' : k === 'apX' ? ' placeholder="round"' : ''}>${k === 'tilt' ? '<span class="piv"></span>' : k === 'd' ? '<span class="piv oa"></span>' : ''}</td>`;
   const esc = s => s.replace(/[&"<]/g, c => `&#${c.charCodeAt(0)};`);
   $('tbl').innerHTML =
     `<thead><tr><th>#</th><th class="l" title="Optional label, shown in the view">Name</th><th class="l">Type</th>` +

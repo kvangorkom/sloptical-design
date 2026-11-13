@@ -44,6 +44,11 @@ const COLS = [
   ['t', 'Dist →', 'Distance (mm) along the axis ray to the next surface'],
   ['n', 'n', 'Refractive index after the surface'],
   ['ap', 'Semi-ap', 'Clear semi-aperture (mm); blank = unlimited'],
+  [
+    'apX',
+    'Semi-ap x',
+    'For a rectangular aperture: its half-width (mm) along the surface’s x, Semi-ap then being its half-width along y; blank = round',
+  ],
 ];
 // In 3D (a design with them, or any view but the side one) two more columns follow Tilt: tiltY and clock (src/engine/trace.js header).
 const COLS3 = [
@@ -142,6 +147,7 @@ const SPAN = {
   n: 0.25,
   ap: 5,
   abbe: 20,
+  apX: 5,
   lines: 100,
   order: 1,
 }; // jog half-range when the value is 0 (else ±50 %)
@@ -168,6 +174,13 @@ function lamColor(l) {
   return `rgb(${a[1].map((v, i) => Math.round(v + t * (b[1][i] - v))).join(',')})`;
 }
 const fmt = v => +(+v).toPrecision(6);
+/** A wavelength's colour among the design's own: its hue when they are all visible; otherwise (ultraviolet or infrared,
+ *  which would all look alike) the hue at its place between the shortest and the longest, spread over the visible. */
+function lamCol(l) {
+  const L = sys.lambdas ?? [sys.lambda];
+  const [lo, hi] = [Math.min(...L), Math.max(...L)];
+  return (lo >= 0.4 && hi <= 0.7) || hi === lo ? lamColor(l) : lamColor(0.42 + (0.26 * (l - lo)) / (hi - lo));
+}
 const nf = v =>
   v !== v
     ? '—'
@@ -176,15 +189,16 @@ const nf = v =>
       : Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3)
         ? v.toExponential(2)
         : +v.toPrecision(4);
+const BLANK0 = ['ap', 'apX', 'abbe']; // (shown blank when 0)
 const show = (k, v = 0) =>
   (k === 'R' || k === 'f') && !v
     ? '∞'
-    : (k === 'ap' || k === 'abbe') && !v
+    : BLANK0.includes(k) && !v
       ? ''
       : String(fmt(Math.abs(v) < 1e-12 ? 0 : v)); // solver round-off reads as 0
 const parse = (k, s) => (
   (s = s.trim()),
-  /^[+-]?(inf|∞)/i.test(s) || ((k === 'ap' || k === 'abbe') && !s) ? 0 : s && isFinite(+s) ? +s : null
+  /^[+-]?(inf|∞)/i.test(s) || (BLANK0.includes(k) && !s) ? 0 : s && isFinite(+s) ? +s : null
 );
 const tok = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const label = i => sys.rows[i + 1]?.name || 'S' + (i + 1);
@@ -220,7 +234,17 @@ let S = [];
 let AX = [];
 let T = [];
 let B = [];
-let BW = []; // other wavelengths: [{ l (µm), S, B }] (see layout())
+let BW = []; // other wavelengths: [{ l (µm), S, from, T, B, C }] (see layout())
+/** Run fn with the surfaces Sl as the layout's (what cones() and the per-layout caches read): another wavelength's. */
+function withS(Sl, fn) {
+  const keep = S;
+  S = Sl;
+  try {
+    return fn();
+  } finally {
+    S = keep;
+  }
+}
 let C = [];
 let CJ = [];
 // A double pass (S.dp): the light back off the last mirror. AXB[k]: start and direction of return segment k (k = 0 leaves
@@ -297,6 +321,7 @@ function load(o, keepView) {
   $('rays').value = sys.rays;
   $('grid').value = sys.grid;
   $('airy').checked = sys.airy;
+  $('fwhm').checked = !!sys.fwhm;
   $('full').checked = sys.full;
   $('aoiT').checked = !!sys.aoi;
   if (!keepView) {
@@ -353,14 +378,19 @@ function layout() {
     if (s.ball) [s.y0, s.y1] = [-0.999 / Math.abs(s.c), 0.999 / Math.abs(s.c)]; // (a caliball: the whole ball, whatever meets it)
     s.prof = Optics.profile(s, s.y0, s.y1);
   });
-  // other wavelengths (when some glass disperses): the same optics, each traced with that wavelength's indices
+  // other wavelengths (when some glass or a grating disperses): the same optics, each traced at that wavelength. from: the
+  // first surface that treats it differently (−1: none), where its light parts from the primary's and is drawn from
   BW =
     sys.lambdas && Optics.dispersive(sys.rows)
       ? sys.lambdas.slice(1).map(l => {
           const Sl = Optics.atWavelength(S, sys.rows, l, sys.lambda);
           const bl = (pts, f) =>
             pts.map(([x, y]) => [Optics.start(x, y, f, S.beam), ...Optics.trace(Sl, x, y, f)]);
-          return { l, S: Sl, B: sys.fields.map(f => bl(Optics.grid(a, sys.grid), f)) };
+          const [Tl, Bl] = [Optics.fan(a, sys.rays), Optics.grid(a, sys.grid)].map(p =>
+            sys.fields.map(f => bl(p, f)),
+          );
+          const from = Sl.findIndex((s, i) => s !== S[i]);
+          return { l, S: Sl, from, T: Tl, B: Bl, C: sys.view === 'rays' ? [] : withS(Sl, cones) };
         })
       : [];
   C = sys.view === 'rays' ? [] : cones();

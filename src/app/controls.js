@@ -84,6 +84,11 @@ $('airy').onchange = e => {
   sys.airy = e.target.checked;
   update();
 };
+$('fwhm').onchange = e => {
+  if (e.target.checked) sys.fwhm = true;
+  else delete sys.fwhm;
+  update();
+};
 $('full').onchange = e => {
   sys.full = e.target.checked;
   update();

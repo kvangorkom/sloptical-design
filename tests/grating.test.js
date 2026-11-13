@@ -119,8 +119,15 @@ describe('grating', () => {
     assert.match(O.zemaxConfigs([{ rows: rows() }], { lambda: lam }).text, /TYPE DGRATING/);
   });
 
-  test('the batoid and optiland scripts, which have no gratings, refuse one', () => {
-    for (const lib of ['batoid', 'optiland']) assert.throws(() => O.toPython(rows(), lib), /grating/);
+  test('scripts: optiland’s has the grating (period in µm, order, groove angle); batoid, which has none, refuses', () => {
+    assert.throws(() => O.toPython(rows(), 'batoid'), /grating/);
+    const py = O.toPython(rows({ order: -1 }), 'optiland');
+    assert.match(py, /GRATINGS = \{0: \(1\.6666666666666\d*, -1, 0\)\}/);
+    assert.match(py, /surface_type="grating", grating_period=period, grating_order=order/);
+    assert.doesNotMatch(O.toPython([rows()[0], mirror({ t: 10 }), surf()], 'optiland'), /GRATINGS/);
+    // grooves turned about the axis send the light out of the plane: a 3D design, which the optiland script can't lay out
+    assert.ok(O.is3D(rows({ groove: 20 })) && !O.is3D(rows()));
+    assert.throws(() => O.toPython(rows({ groove: 20 }), 'optiland'), /leaves the y–z plane/);
   });
 
   test('reversing a system says its gratings are not carried over', () => {
@@ -345,5 +352,116 @@ describe('Zemax import: a spectropolarimeter’s surfaces', () => {
     );
     const p = O.fromZemax(txt).configs.rows[0];
     assert.deepEqual([p.fields, p.lam, p.lams], [undefined, undefined, undefined]);
+  });
+});
+
+// The drawing's choice of ray points (src/app/draw.js), run here with stand-ins for the app's layout globals.
+describe('drawing', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/app/draw.js'), 'utf8');
+  const part = re => re.exec(src)[0];
+  const make = new Function(
+    'sys',
+    'S',
+    'BW',
+    'src',
+    'lamCol',
+    'C',
+    `${part(/const otherWaves = [^]*?\n\/\*\* A beam's cone fan/)}*/ ${part(/function drawRange[^]*?\n}\n/)}return { drawRange, otherRays, coneBeams };`,
+  );
+  const app = f => require('fs').readFileSync(require('path').join(__dirname, '../src/app', f), 'utf8');
+  const pts = n => Array.from({ length: n }, (_, i) => ({ p: [0, 0, i] }));
+
+  test('a pupil beyond the first surface is not where rays are drawn from: they start on the first surface', () => {
+    const at = t => make({ rows: [{ t }] }, [{}, {}], [], () => [[0, 0, -9]], null).drawRange();
+    const zs = P => P.map(p => p[2]);
+    assert.deepEqual(zs(at(10).ray(0, pts(3))), [-9, 0, 1, 2], 'the source, the pupil, both surfaces');
+    assert.deepEqual(zs(at(-10).ray(0, pts(3))), [1, 2], 'the surfaces only');
+    assert.deepEqual(at(10).cone(0, ['src', 'pupil', 's0', 's1']), ['src', 'pupil', 's0', 's1']);
+    assert.deepEqual(at(-10).cone(0, ['src', 'pupil', 's0', 's1']), ['s0', 's1']);
+  });
+
+  test('the other wavelengths are drawn too, as rays and as cones, from where each parts from the primary', () => {
+    const BW = [
+      { l: 0.4, from: 1, T: [[pts(4)], [pts(4)]], C: ['c0', 'c1'] },
+      { l: 0.7, from: -1, T: [[pts(4)], [pts(4)]], C: [] }, // (nothing disperses it: not drawn again)
+    ];
+    const S = [{}, {}, {}];
+    const { drawRange, otherRays, coneBeams } = make(
+      { rows: [{ t: 0 }] },
+      S,
+      BW,
+      () => [],
+      l => `λ${l}`,
+      ['p0', 'p1'],
+    );
+    const D = drawRange();
+    const rays = otherRays([1, 0], D);
+    assert.deepEqual(
+      rays.map(r => [r.j, r.col]),
+      [
+        [1, 'λ0.4'],
+        [0, 'λ0.4'],
+      ],
+    );
+    assert.deepEqual(
+      rays[0].D.ray(0, rays[0].rs).map(p => p[2]),
+      [2, 3],
+      'from surface 1 on',
+    );
+    const [prim, other] = coneBeams({ fc: j => `f${j}` }, D, [0, 1]);
+    assert.deepEqual(
+      prim.map(b => [b.col, b.C, b.D === D]),
+      [
+        ['f0', 'p0', true],
+        ['f1', 'p1', true],
+      ],
+    );
+    assert.deepEqual(
+      other.map(b => [b.col, b.C, b.D.a]),
+      [
+        ['λ0.4', 'c0', 1],
+        ['λ0.4', 'c1', 1],
+      ],
+    );
+    assert.equal(
+      coneBeams({ fc: () => '' }, drawRange([0, 0]), [0]).length,
+      1,
+      'out of the drawn range: the primary only',
+    );
+  });
+});
+
+describe('wavelength colours and spot sizes', () => {
+  const app = f => require('fs').readFileSync(require('path').join(__dirname, '../src/app', f), 'utf8');
+  const state = app('state.js');
+  const lamCol = sys =>
+    new Function(
+      'sys',
+      `${/function lamColor[^]*?\n}\n/.exec(state)[0]}${/function lamCol\([^]*?\n}\n/.exec(state)[0]}return lamCol;`,
+    )(sys);
+  const spotSize = new Function(
+    'nf',
+    `${/const spotSize = [^]*?\n};\n/.exec(app('popups.js'))[0]}return spotSize;`,
+  )(v => String(+v.toPrecision(4)));
+
+  test('wavelengths outside the visible, which would all look alike, each get a colour of their own', () => {
+    const uv = [0.25, 0.18, 0.32];
+    assert.equal(new Set(uv.map(lamCol({ lambda: 0.25, lambdas: uv }))).size, 3);
+    const ir = [1.55, 1.3];
+    assert.equal(new Set(ir.map(lamCol({ lambda: 1.55, lambdas: ir }))).size, 2);
+    // all visible: each its own hue, whatever the others are; one alone: its hue too
+    const vis = { lambda: 0.55, lambdas: [0.55, 0.45, 0.65] };
+    assert.equal(lamCol(vis)(0.45), lamCol({ lambda: 0.45 })(0.45));
+    assert.equal(
+      lamCol({ lambda: 0.25 })(0.25),
+      lamCol({ lambda: 0.3 })(0.3),
+      'a single ultraviolet one: violet',
+    );
+  });
+
+  test('a spot’s size has its unit, and can be the FWHM of a Gaussian spot with that RMS radius', () => {
+    assert.equal(spotSize(0.0123), '12.3 µm');
+    assert.equal(spotSize(0.25), '0.25 mm');
+    assert.equal(spotSize(0.01, true), '16.65 µm', '2 √(ln 2) × the RMS radius');
   });
 });

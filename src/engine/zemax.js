@@ -530,7 +530,13 @@
     const ρ = c ? Math.hypot(...ρv) : 0;
     const Fin = [fx, fy, r.u];
     const ref = Math.abs(dot(fy, ez)) < 0.99 ? fy : fx;
-    const yh = ρ > 1e-9 * (1 + Math.hypot(...q)) ? ρv.map(v => v / ρ) : unit(add(ref, ez, -dot(ref, ez)));
+    // (a flat with a rectangular aperture keeps its own y, so the rectangle stays square to the row's axes)
+    const yh =
+      ρ > 1e-9 * (1 + Math.hypot(...q))
+        ? ρv.map(v => v / ρ)
+        : s.rect && !c
+          ? s.ey
+          : unit(add(ref, ez, -dot(ref, ez)));
     const opt = [1, -1]
       .map(g => {
         const ey = yh.map(v => g * v);
@@ -568,7 +574,7 @@
   function tidy(rows) {
     const size = Math.max(1, ...rows.map(r => Math.abs(r.t)));
     for (const r of rows)
-      for (const k of ['t', 'R', 'd', 'tilt', 'tiltY', 'clock', 'ap'])
+      for (const k of ['t', 'R', 'd', 'tilt', 'tiltY', 'clock', 'ap', 'apX'])
         if (typeof r[k] === 'number')
           r[k] =
             Math.abs(r[k]) < 1e-11 * (['tilt', 'tiltY', 'clock'].includes(k) ? 1 : size)
@@ -778,7 +784,7 @@
    *  gratings (rows with lines, order, groove; the primary wavelength then on the pupil row as lam), birefringent
    *  surfaces (as plain refracting ones, with the crystal's ordinary or extraordinary index by their mode: right while
    *  the crystal axis lies across the beam, as in a Wollaston prism; no walk-off), and non-sequential components (left
-   *  out). Ignored, with a warning where they
+   *  out), and rectangular apertures (SQAP: rows with ap and apX, about where the axis ray lands). Ignored, with a warning where they
    *  occur: solves, aspheric and other higher-order terms, apertures, and (in a plane) anything out of it. plane: the
    *  file's global plane drawn as this tool's y–z plane: 'yz' (the default, as OpticStudio's Cross-Section layout; out of
    *  it: decenters in x, tilts about y), 'xz' (global x drawn as y; for systems folded in x–z), '3d', or 'auto' (the first
@@ -1004,8 +1010,10 @@
         const drawn = v => (D3 ? v : [0, v[inP], v[2]]);
         const gr = type === 'DGRATING' && P(1) && { lines: P(1) * 1e3, order: P(2), y: drawn(ax(1)) }; // (lines/µm; ruled along its x)
         if (gr && !D3 && Math.abs(ax(0)[outP]) < 1 - 1e-9) out = true;
+        const sq = z.SQAP?.[0]; // a rectangular aperture: its half-widths in x and y
         A.push({
           ...(nsc && { nsc }),
+          ...(+sq?.[0] > 0 && +sq[1] > 0 && { rect: [+sq[0] * f, +sq[1] * f] }),
           ...(gr && { gr }),
           ...(bire && { cax: drawn(col(M, [P(2), P(3), P(4)])) }), // (the crystal axis: parameters 2 to 4, its direction cosines)
           zi: z.i,
@@ -1180,6 +1188,7 @@
         name: a.name || (j === A.length - 1 ? 'Image' : ''),
         ...pl.row,
         ...(a.gr && grating(a.gr, Td(a.gr.y), pl)),
+        ...(a.rect && rectAp(a, s, h, pl)),
         _zi: a.zi, // (the file's surface: what identifies it across configurations)
         _drop: plain && (s.hidden || !a.name), // (a dummy plane: see below)
         _nsc: plain && a.nsc, // (a non-sequential group's port: never kept)
@@ -1195,6 +1204,25 @@
     // Dummy planes (no power, no change of index) that OpticStudio hides or that have no name, there to anchor coordinate
     // breaks, solves and merit-function targets, are dropped: the axis runs straight through them, so the distance to them
     // and on from them add up. Named, visible ones (focal planes, pupil planes, stops) are kept.
+    /** A surface's rectangular aperture (a.rect: half-widths along the file's x and y) as row values: ap along the row's y,
+     *  apX along its x, about where the axis ray lands, which must be near the aperture's own centre, the vertex. */
+    function rectAp(a, s, h, pl) {
+      const who = a.name || 'surface ' + a.zi;
+      const az = D3
+        ? (Math.atan2(-dot(s.ey, pl.x), dot(s.ey, cross(pl.z, pl.x))) * 180) / Math.PI
+        : plane === 'xz'
+          ? 90
+          : 0; // (the file's y in the row's frame)
+      const q = Math.round(az / 90);
+      const [apX, ap] = q % 2 ? [a.rect[1], a.rect[0]] : a.rect;
+      if (Math.hypot(...add(h.p, s.V, -1)) > Math.min(ap, apX) / 2)
+        return void warn(`${who}: its rectangular aperture is not centred on the beam; left out`);
+      if (Math.abs(az - 90 * q) > 1)
+        warn(
+          `${who}: its rectangular aperture is turned ${+(az - 90 * q).toFixed(1)}° about the axis; drawn square to the surface’s own axes`,
+        );
+      return { ap, apX };
+    }
     const dropped = [];
     for (let i = rows.length - 2; i > 0; i--)
       if ((rows[i]._drop && !keepDummies) || rows[i]._nsc) {
