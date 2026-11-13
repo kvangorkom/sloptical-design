@@ -465,3 +465,35 @@ describe('wavelength colours and spot sizes', () => {
     assert.equal(spotSize(0.01, true), '16.65 µm', '2 √(ln 2) × the RMS radius');
   });
 });
+
+describe('the reference wavelength', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/app/controls.js'), 'utf8');
+  const make = sys =>
+    new Function(
+      'sys',
+      `${/const parseLams = [^]*?\n};\n/.exec(src)[0]}${/const refMoves = [^\n]*\n/.exec(src)[0]}return { parseLams, refMoves };`,
+    )(sys);
+
+  test('wavelengths as typed: one or several, the first the reference', () => {
+    const { parseLams } = make({});
+    assert.deepEqual(parseLams('0.25, 0.18 0.32'), [0.25, 0.18, 0.32]);
+    assert.deepEqual(parseLams(' 0.55 '), [0.55]);
+    for (const bad of ['', '0', '0.5, x', '-1']) assert.equal(parseLams(bad), null, bad);
+  });
+
+  test('changing it moves optics only with a grating: that is when the app asks first', () => {
+    const plain = { lambda: 0.5, rows: [{}, { type: 'mirror' }] };
+    const grating = { lambda: 0.5, rows: [{}, { type: 'mirror', lines: 600 }] };
+    assert.equal(make(plain).refMoves([0.6]), false, 'no grating: nothing moves');
+    assert.equal(make(grating).refMoves([0.6, 0.5]), true);
+    assert.equal(
+      make(grating).refMoves([0.5, 0.6, 0.4]),
+      false,
+      'the same reference, other wavelengths added',
+    );
+    // and it does move them: the surface after the grating is somewhere else
+    const rows = l => [{ t: 50, ap: 5, lam: l }, mirror({ tilt: 10, lines: 600, order: 1, t: 100 }), surf()];
+    const P = l => O.build(rows(l))[1].P;
+    assert.ok(Math.hypot(...O.add(P(0.5), P(0.6), -1)) > 5);
+  });
+});

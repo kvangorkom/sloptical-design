@@ -113,7 +113,7 @@ function helpDialog(view = 'keys') {
     ],
     [
       'Wavelengths',
-      'list several (µm, the primary first) and give glasses an Abbe number (V column): spot diagrams show each wavelength in its colour, and the watch window has axial and lateral colour.',
+      'list several (µm, the reference first) and give glasses an Abbe number (V column): the layout and spot diagrams show each wavelength in its colour, and the watch window has axial and lateral colour. The reference wavelength’s ray is the optical axis: with a grating, changing it moves the optics after the grating (it asks first).',
     ],
     ['Examples', 'the Examples menu loads an example design into this tab.'],
     [

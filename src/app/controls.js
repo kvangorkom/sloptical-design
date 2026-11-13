@@ -66,19 +66,43 @@ $('fields').oninput = e => {
     update();
   }
 };
-$('lambda').oninput = e => {
-  // one wavelength, or several (µm, comma-separated): the first is the primary (layout, WFE, Airy disk)
-  const L = e.target.value
+/** Wavelengths as typed: one, or several (µm, comma-separated), the first the reference (the optical axis is its ray; the
+ *  layout, WFE and Airy disk are its). null if malformed. */
+const parseLams = t => {
+  const L = t
     .split(/[\s,;]+/)
     .filter(Boolean)
     .map(Number);
-  if (!L.length || !L.every(v => v > 0 && v < 100)) return;
+  return L.length && L.every(v => v > 0 && v < 100) ? L : null;
+};
+/** Whether wavelengths L would move optics: a new reference wavelength in a design with a grating, which diffracts the
+ *  axis ray by it, and every optic after it is placed along that ray. */
+const refMoves = L => L[0] !== sys.lambda && sys.rows.some(r => r.lines);
+function setLams(L) {
   const was = !!sys.lambdas;
   sys.lambda = L[0];
   if (L.length > 1) sys.lambdas = L;
   else delete sys.lambdas;
   if (!!sys.lambdas !== was) renderTable(); // the Abbe column
   update();
+}
+$('lambda').oninput = e => {
+  const L = parseLams(e.target.value);
+  if (L && !refMoves(L)) setLams(L); // (a new reference wavelength with a grating waits until the box is left, and asks)
+};
+$('lambda').onchange = e => {
+  const L = parseLams(e.target.value);
+  if (!L || !refMoves(L)) return;
+  const where = sys.configs
+    ? ` in this configuration (${sys.configs.list[sys.configs.active].name}) only`
+    : '';
+  const ok = confirm(
+    `The first wavelength is the reference: the optical axis is its ray, and a grating diffracts it by wavelength.\n\n` +
+      `Changing it from ${sys.lambda} to ${L[0]} µm moves every optic after the grating${where}: ` +
+      `a design imported from Zemax will no longer be where the file had it.\n\nChange the reference wavelength?`,
+  );
+  if (ok) setLams(L);
+  else showBeam(); // (as it was)
 };
 $('airy').onchange = e => {
   sys.airy = e.target.checked;
