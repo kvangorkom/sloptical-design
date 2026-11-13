@@ -538,7 +538,28 @@
     return Object.assign(out, { beam: S.beam, ap: S.ap, dp: S.dp });
   }
 
+  /** The first surface after which another wavelength's light (surfaces Sl: atWavelength) visibly parts from the reference's
+   *  (S): where some field's chief ray (or, should an aperture stop that, a ray half way out the pupil) leaves in a direction
+   *  more than tol (rad) from the reference's. −1: nowhere (a lens's colour shifts the focus but hardly turns the beam; a
+   *  grating or a prism turns it). */
+  function partsFrom(S, Sl, fields = [0], tol = 1e-3) {
+    if (Sl === S) return -1;
+    const h = (S.ap ?? 1) / 2;
+    const pupil = [
+      [0, 0],
+      [0, h],
+      [0, -h],
+      [h, 0],
+      [-h, 0],
+    ];
+    const pairs = fields.flatMap(f => pupil.map(([x, y]) => [trace(S, x, y, f), trace(Sl, x, y, f)]));
+    return S.findIndex((_, i) =>
+      pairs.some(([a, b]) => a[i] && b[i] && Math.hypot(...add(a[i].u, b[i].u, -1)) > tol),
+    );
+  }
+
   Object.assign(Optics, {
+    partsFrom,
     spot,
     na,
     toPlane,

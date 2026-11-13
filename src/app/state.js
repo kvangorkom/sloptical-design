@@ -379,7 +379,8 @@ function layout() {
     s.prof = Optics.profile(s, s.y0, s.y1);
   });
   // other wavelengths (when some glass or a grating disperses): the same optics, each traced at that wavelength. from: the
-  // first surface that treats it differently (−1: none), where its light parts from the primary's and is drawn from
+  // first surface after which its light visibly parts from the reference's (Optics.partsFrom; −1: none), where it is
+  // drawn from (a lens's slight colour alone isn't drawn: its cone would only lie over the reference's and fade it)
   BW =
     sys.lambdas && Optics.dispersive(sys.rows)
       ? sys.lambdas.slice(1).map(l => {
@@ -389,7 +390,7 @@ function layout() {
           const [Tl, Bl] = [Optics.fan(a, sys.rays), Optics.grid(a, sys.grid)].map(p =>
             sys.fields.map(f => bl(p, f)),
           );
-          const from = Sl.findIndex((s, i) => s !== S[i]);
+          const from = Optics.partsFrom(S, Sl, sys.fields);
           return { l, S: Sl, from, T: Tl, B: Bl, C: sys.view === 'rays' ? [] : withS(Sl, cones) };
         })
       : [];

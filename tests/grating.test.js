@@ -497,3 +497,42 @@ describe('the reference wavelength', () => {
     assert.ok(Math.hypot(...O.add(P(0.5), P(0.6), -1)) > 5);
   });
 });
+
+describe('where another wavelength parts from the reference (what the layout draws of it)', () => {
+  const lam = 0.55;
+  const from = rows => {
+    const S = O.build(rows);
+    return O.partsFrom(S, O.atWavelength(S, rows, 0.45, lam), [0, 0.5]);
+  };
+  const lens = [surf({ R: 60, n: 1.5168, abbe: 64.17, t: 5 }), surf({ R: -60, t: 50 })];
+
+  test('a lens’s colour alone is not drawn apart; a grating or a prism is, from that surface on', () => {
+    assert.equal(
+      from([{ t: 10, ap: 5, lam }, ...lens, surf()]),
+      -1,
+      'a lens: the focus shifts, the beam hardly turns',
+    );
+    const grating = mirror({ tilt: 10, lines: 600, order: 1, t: 50 });
+    assert.equal(
+      from([{ t: 10, ap: 5, lam }, ...lens, grating, surf()]),
+      2,
+      'from the grating, not the lens before it',
+    );
+    const prism = [surf({ tilt: 30, n: 1.72825, abbe: 28.41, t: 10 }), surf({ tilt: -30, t: 50 })];
+    assert.equal(
+      from([{ t: 10, ap: 5, lam }, surf({ t: 20 }), ...prism, surf()]),
+      1,
+      'from a prism’s first face',
+    );
+    const S = O.build([{ t: 10, ap: 5 }, mirror({ t: 10 }), surf()]);
+    assert.equal(O.partsFrom(S, S), -1, 'nothing disperses');
+    const rows = [{ t: 10, ap: 5, lam }, surf({ t: 100 }), { ...grating, ap: 2 }, surf()];
+    const Sg = O.build(rows); // (a 2° field walks off the small grating: its chief ray misses it, part of its beam doesn't)
+    assert.equal(O.trace(Sg, 0, 0, 2).length, 1);
+    assert.equal(
+      O.partsFrom(Sg, O.atWavelength(Sg, rows, 0.45, lam), [2]),
+      1,
+      'a grating the chief ray misses still parts the light',
+    );
+  });
+});
