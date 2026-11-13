@@ -8,6 +8,13 @@ and/or optiland). Reads a JSON list of requests on stdin, writes a JSON list of 
       wavefront error (waves) from batoid.wavefront after removing piston, tilt and focus (collimated beams only).
   {"op": "optiland", "script": path, "pupil": [[px, py], ...] (normalised), "fields": [...], "wfe": bool}
       The same for an exported optiland script, traced with trace_generic; EFL and f/# from its paraxial module.
+      "wavelength" (µm): trace at that one instead of the script's (through the same layout: a grating's other colours).
+  {"op": "index", "material": name, "reference": its data set, "wavelengths": [µm, ...]}
+      optiland's index of a catalogue material (a crystal's ordinary or extraordinary one, as "Dodge-o", "Dodge-e").
+  {"op": "stack", "ap": semi-aperture, "surfaces": [{"z", "rx" (rad), "material": "air" | [name, reference]}, ...],
+   "pupil": [[px, py], ...] (normalised), "wavelengths": [µm, ...]}
+      Planes at absolute positions behind a stop at z = 0, in optiland with its own materials, a collimated on-axis beam
+      traced at each wavelength: the hits on the last plane.
   {"op": "samples", "pupil": [[px, py], ...] (normalised)}
       Designs that ship with the libraries (optiland's sample lenses that this tool can describe: coaxial standard
       surfaces, an object at infinity, angle fields; batoid's Calypso telescope and the donsoptikz1 apochromat), each as
@@ -79,6 +86,11 @@ def has():
             out[name] = True
         except Exception:
             out[name] = False
+    try:                                                               # (newer optilands only: 0.6.0 has them, 0.4.1 not)
+        from optiland.geometries import PlaneGrating  # noqa: F401
+        out["gratings"] = True
+    except Exception:
+        out["gratings"] = False
     return out
 
 
@@ -222,7 +234,7 @@ def run_optiland(q):
     m = load(q["script"])
     with contextlib.redirect_stdout(io.StringIO()):
         op = m.build()
-    wl = m.WAVELENGTH
+    wl = q.get("wavelength", m.WAVELENGTH)                             # (another wavelength through the same layout)
     top = max(abs(f) for f in q["fields"]) or 1.0
     def leave(py):                                                     # real paraxial rays (its paraxial module expects coaxial designs)
         with contextlib.redirect_stdout(io.StringIO()):
@@ -233,6 +245,29 @@ def run_optiland(q):
     if q.get("wfe"):
         res["wfe"] = [optiland_wfe(op, f / top, wl, .02 * m.A, absolute=True) for f in q["fields"]]
     return res
+
+
+def optiland_index(q):
+    from optiland.materials import Material
+    m = Material(q["material"], reference=q["reference"])
+    return {"n": [float(np.ravel(m.n(w))[0]) for w in q["wavelengths"]]}
+
+
+def optiland_stack(q):
+    from optiland.materials import Material
+    from optiland.optic import Optic
+    op = Optic()
+    op.surfaces.add(index=0, z=-np.inf)
+    op.surfaces.add(index=1, z=0.0, is_stop=True)
+    for i, s in enumerate(q["surfaces"], start=2):
+        m = s.get("material", "air")
+        op.surfaces.add(index=i, z=s["z"], rx=s.get("rx", 0.0),
+                        material=Material(m[0], reference=m[1]) if isinstance(m, list) else m)
+    op.set_aperture(aperture_type="EPD", value=2 * q["ap"])
+    op.fields.set_type("angle")
+    op.fields.add(y=0.0)
+    op.wavelengths.add(value=q["wavelengths"][0], is_primary=True)
+    return {"hits": [optiland_trace(op, 0.0, q["pupil"], w) for w in q["wavelengths"]]}
 
 
 # ── the libraries' own designs ──────────────────────────────────────────────────────────────────────────────────────
@@ -393,6 +428,10 @@ def main():
                 out.append(run_batoid(q))
             elif q["op"] == "optiland":
                 out.append(run_optiland(q))
+            elif q["op"] == "index":
+                out.append(optiland_index(q))
+            elif q["op"] == "stack":
+                out.append(optiland_stack(q))
             elif q["op"] == "samples":
                 L = []
                 avail = has()

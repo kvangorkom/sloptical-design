@@ -25,6 +25,10 @@
     inFocus,
   } = Optics;
 
+  /** A grating's lines for a .zmx (a Diffraction Grating surface: lines/µm, then the order, which changes sign with the
+   *  surface's y, g = −1 in a flipped frame). Its grooves lie along the surface's x (a `groove` turn isn't written). */
+  const grooves = (s, g) => (s.gk ? [`PARM 1 ${s.lines * 1e-3}`, `PARM 2 ${g * (s.order ?? 1)}`] : []);
+
   /** Zemax OpticStudio sequential lens file (.zmx) for the current geometry: surfaces, conics, spacings, glasses, fields,
    *  wavelength and entrance pupil. A beam from a focus becomes a finite object (thickness −R; negative, i.e. virtual,
    *  when converging) with object-height fields; a collimated beam an object at infinity with angle fields. Solves, pivots and apertures are not exported (the geometry they produce is).
@@ -51,11 +55,12 @@
       ...S.map((s, i, _, g = σ, __ = s.mirror && (σ = -σ)) => ({
         V: s.V,
         ez: s.ez.map(v => g * v),
-        type: s.para ? 'PARAXIAL' : 'STANDARD',
+        type: s.para ? 'PARAXIAL' : s.gk ? 'DGRATING' : 'STANDARD',
         lines: [
           `COMM ${(s.name || 'S' + (i + 1)).replace(/\s+/g, '_')}`,
           `CURV ${E(g * s.c)}`,
           ...(s.para ? [`PARM 1 ${E(s.f)}`, 'PARM 2 1'] : [`CONI ${E(s.k)}`]), // (an ideal lens: focal length, OPD by integration)
+          ...grooves(s, g),
           ...(s.mirror
             ? ['GLAS MIRROR 0 0 1.5 40 0 0 0 0 0 0']
             : s.nOut !== 1
@@ -219,11 +224,12 @@
         Z: ez.map(v => g * v),
       };
       if (!s) return { ...out, type: 'STANDARD', lines: e.plain };
-      out.type = s.para ? 'PARAXIAL' : 'STANDARD';
+      out.type = s.para ? 'PARAXIAL' : s.gk ? 'DGRATING' : 'STANDARD';
       out.lines = [
         `COMM ${e.name.replace(/\s+/g, '_')}`,
         `CURV ${E(g * s.c)}`,
         ...(s.para ? [`PARM 1 ${E(s.f)}`, 'PARM 2 1'] : [`CONI ${E(s.k)}`]),
+        ...grooves(s, g),
         ...(s.mirror ? ['GLAS MIRROR 0 0 1.5 40 0 0 0 0 0 0'] : glass(e.n, e.abbe)),
       ];
       return out;
@@ -359,8 +365,9 @@
     });
     sf.push(['TYPE STANDARD', 'CURV 0', 'DISZ 0']); // the image, on the last surface met
     const r0 = designs[active].rows[0];
+    const beamKey = p => JSON.stringify([p.fields, p.lam, p.lams]); // (a configuration's own fields and wavelengths)
     for (const d of designs)
-      if (d.rows[0].ap !== r0.ap || (d.rows[0].R || 0) !== (r0.R || 0))
+      if (d.rows[0].ap !== r0.ap || (d.rows[0].R || 0) !== (r0.R || 0) || beamKey(d.rows[0]) !== beamKey(r0))
         warnings.push(
           `${d.name || 'a configuration'}: its entrance pupil or beam differs; written as the saved configuration's`,
         );
@@ -420,6 +427,8 @@
     'N-SF6': 1.80518,
     SF6: 1.80518,
     'N-BAF10': 1.67003,
+    BAFN10: 1.67003,
+    SF5: 1.6727,
     'N-LAK22': 1.65113,
     'N-SF5': 1.67271,
     'N-SK16': 1.62041,
@@ -447,6 +456,8 @@
     'N-SF6': 25.36,
     SF6: 25.43,
     'N-BAF10': 47.11,
+    BAFN10: 47.11,
+    SF5: 32.21,
     'N-LAK22': 55.89,
     'N-SF5': 32.25,
     'N-SK16': 60.32,
@@ -461,10 +472,26 @@
     'S-BAL35R': 60.96,
   };
 
+  /** Birefringent crystals: Sellmeier terms [B, λ₀ (µm)] of the ordinary (o) and extraordinary (e) index,
+   *  n² = 1 + Σ B λ² / (λ² − λ₀²). MgF2: Dodge (1984), 0.2–7 µm. */
+  const CRYSTAL = {
+    MGF2: {
+      o: [0.48755108, 0.04338408, 0.39875031, 0.09461442, 2.3120353, 23.793604],
+      e: [0.41344023, 0.03684262, 0.50497499, 0.09076162, 2.4904862, 23.771995],
+    },
+  };
+  /** A crystal's index at l0 (µm), and the Abbe number that gives this tool's dispersion law its index at l1 too. */
+  function crystal(c, l0, l1) {
+    const n = l => Math.sqrt(1 + [0, 2, 4].reduce((s, i) => s + (c[i] * l * l) / (l * l - c[i + 1] ** 2), 0));
+    const K = 0.4861327 ** -2 - 0.6562725 ** -2; // (the F and C lines: see nAt in analysis.js)
+    return [n(l0), ((n(l0) - 1) * (l1 ** -2 - l0 ** -2)) / (K * (n(l1) - n(l0)))];
+  }
+
   /** A surface placed absolutely (s: vertex V, axis ez, in 3D also ex, ey; curvature c along ez, conic k, mirror, n after,
    *  abbe, para and f) as a row of this tool, met by the axis ray r (hit there: h). Its axis is taken facing the light, its
    *  off-axis height (or, near an equator, its normal angle) read where the ray lands, and its tilt (3D: tilt, tilt y and
-   *  clock, from the incoming frame fr = [x, y], carried on as build carries it) from its axis. Returns { row, fr }. */
+   *  clock, from the incoming frame fr = [x, y], carried on as build carries it) from its axis. Returns { row, fr, and the
+   *  row's own x and z axes }. */
   function placed(s, r, h, D3, fr) {
     const σ = dot(s.ez, r.u) < 0 ? -1 : 1;
     const ez = s.ez.map(v => σ * v);
@@ -492,6 +519,8 @@
           tilt: ((angle(ez) - angle(r.u) + 540) % 360) - 180,
         },
         fr,
+        x: [1, 0, 0],
+        z: ez,
       };
     }
     // the segment's azimuth on the parent becomes the clock: of ±, the smaller clock
@@ -501,7 +530,13 @@
     const ρ = c ? Math.hypot(...ρv) : 0;
     const Fin = [fx, fy, r.u];
     const ref = Math.abs(dot(fy, ez)) < 0.99 ? fy : fx;
-    const yh = ρ > 1e-9 * (1 + Math.hypot(...q)) ? ρv.map(v => v / ρ) : unit(add(ref, ez, -dot(ref, ez)));
+    // (a flat with a rectangular aperture keeps its own y, so the rectangle stays square to the row's axes)
+    const yh =
+      ρ > 1e-9 * (1 + Math.hypot(...q))
+        ? ρv.map(v => v / ρ)
+        : s.rect && !c
+          ? s.ey
+          : unit(add(ref, ez, -dot(ref, ez)));
     const opt = [1, -1]
       .map(g => {
         const ey = yh.map(v => g * v);
@@ -523,13 +558,23 @@
         clock: opt.e[2],
       },
       fr: carry(fx, fy, r.u, h.u, opt.ex),
+      x: opt.ex,
+      z: ez,
     };
+  }
+  /** A grating's row values: gr { lines, order, y: its y (the way its order counts) in the frame of the placed row pl }.
+   *  The row's own y may point the other way (the order then changes sign) or be turned about its axis (groove, deg). */
+  function grating({ lines, order }, y, pl) {
+    let az = (Math.atan2(-dot(y, pl.x), dot(y, cross(pl.z, pl.x))) * 180) / Math.PI;
+    const flip = Math.abs(az) > 90;
+    if (flip) az -= Math.sign(az) * 180;
+    return { lines, order: flip ? -order : order, ...(Math.abs(az) > 1e-9 && { groove: az }) };
   }
   /** Round-off in placed rows (1e-14 off-axis and the like) read as 0; planar rows keep no tilt y or clock. */
   function tidy(rows) {
     const size = Math.max(1, ...rows.map(r => Math.abs(r.t)));
     for (const r of rows)
-      for (const k of ['t', 'R', 'd', 'tilt', 'tiltY', 'clock', 'ap'])
+      for (const k of ['t', 'R', 'd', 'tilt', 'tiltY', 'clock', 'ap', 'apX'])
         if (typeof r[k] === 'number')
           r[k] =
             Math.abs(r[k]) < 1e-11 * (['tilt', 'tiltY', 'clock'].includes(k) ? 1 : size)
@@ -544,7 +589,22 @@
   // (pickups already resolved). The lens data in the file is the saved configuration's.
   /** The operands that change the surfaces, applied to the parsed surfaces Z for configuration k (IGNM and IGNR are read
    *  by the importer itself). */
-  const MCE_DONE = ['THIC', 'CRVT', 'CONN', 'PRAM', 'GLSS', 'MCOM', 'SDIA', 'IGNM', 'IGNR', 'MOFF'];
+  const MCE_DONE = [
+    'THIC',
+    'CRVT',
+    'CONN',
+    'PRAM',
+    'GLSS',
+    'MCOM',
+    'SDIA',
+    'IGNM',
+    'IGNR',
+    'MOFF',
+    'WAVE',
+    'XFIE',
+    'YFIE',
+  ];
+  const MCE_BEAM = { WAVE: 'WAVM', XFIE: 'XFLN', YFIE: 'YFLN' }; // (a wavelength or field, by its number: into the header)
   const quoted = a => /"([^"]*)"/.exec(a.join(' '))?.[1];
   function mceApply(head, Z, k) {
     const at = i => Z.find(z => z.i === i);
@@ -552,6 +612,12 @@
     for (const op of MCE_DONE)
       for (const a of head[op] ?? []) {
         if (+a[1] !== k || ['IGNM', 'IGNR', 'MOFF'].includes(op)) continue;
+        if (op === 'WAVE') {
+          const w = head.WAVM?.find(w => +w[0] === +a[0]);
+          if (w) w[1] = a[2];
+          else (head.WAVM ??= []).push([a[0], a[2], '1']);
+        } else if (MCE_BEAM[op] && head[MCE_BEAM[op]]) head[MCE_BEAM[op]][0][+a[0] - 1] = a[2];
+        if (MCE_BEAM[op]) continue;
         const z = at(+a[0]);
         if (!z) continue;
         if (op === 'THIC') z.DISZ = [[a[2]]];
@@ -605,11 +671,21 @@
    *  The plane ('auto') is one they all lie in, else 3D. Returns fromZemax's result for the saved configuration, its rows
    *  with ids, plus configs. */
   function fromZemaxConfigs(txt, { plane, keepDummies, n }) {
+    const head = {};
+    for (const raw of txt.split(/\r?\n/)) {
+      if (!raw.trim() || /^\s/.test(raw)) continue;
+      const [key, ...a] = raw.trim().split(/\s+/);
+      (head[key] ??= []).push(a);
+    }
+    // fields that differ between configurations: every one keeps the file's axis (none is rebuilt about its own field)
+    const axisZ = ['XFIE', 'YFIE'].some(op =>
+      (head[op] ?? []).some((a, _, ls) => ls.some(b => b[0] === a[0] && +b[2] !== +a[2])),
+    );
     const all = p => {
       const out = [];
       for (let k = 1; k <= n; k++)
         try {
-          out.push({ k, im: fromZemax(txt, { plane: p, keepDummies, config: k }) });
+          out.push({ k, im: fromZemax(txt, { plane: p, keepDummies, config: k, axisZ }) });
         } catch (err) {
           out.push({ k, err });
         }
@@ -622,12 +698,6 @@
         if (p === '3d' || per.every(x => !x.im?.warnings.some(w => /out of the/.test(w)))) break;
       }
     } else per = all(plane);
-    const head = {};
-    for (const raw of txt.split(/\r?\n/)) {
-      if (!raw.trim() || /^\s/.test(raw)) continue;
-      const [key, ...a] = raw.trim().split(/\s+/);
-      (head[key] ??= []).push(a);
-    }
     const saved = +head.MNUM?.[0]?.[1] || 1;
     const ok = per.filter(x => x.im);
     if (!ok.length) throw per[0].err;
@@ -666,6 +736,14 @@
       solved: {},
     }));
     const rowsOf = ok.map(x => x.im.rows.map(r => ({ ...r, id: id(r) })));
+    // fields and wavelengths that differ: each configuration's own, on its pupil row
+    const beam = ({ fields, lambda, lambdas }) => ({
+      fields,
+      lam: lambda,
+      ...(lambdas && { lams: lambdas }),
+    });
+    if (new Set(ok.map(x => JSON.stringify(beam(x.im)))).size > 1)
+      rowsOf.forEach((rs, ci) => Object.assign(rs[0], beam(ok[ci].im)));
     const order = [...new Set(rowsOf.flat().map(r => r.id))].sort((a, b) =>
       a === 'p' ? -1 : b === 'p' ? 1 : +a.slice(1) - +b.slice(1),
     );
@@ -701,7 +779,12 @@
    *  Kept: radius, conic, spacings, coordinate breaks, mirrors, paraxial (ideal) lenses, glass indices and Abbe numbers,
    *  the stop, fields, wavelengths, the aperture and surface comments. Several configurations: all of them, as this tool's
    *  configurations (fromZemaxConfigs; `configs: false` for the saved one alone, `config: k` for configuration k alone),
-   *  each without the surfaces it ignores (IGNM, IGNR in the multi-configuration editor). Ignored, with a warning where they
+   *  each without the surfaces it ignores (IGNM, IGNR in the multi-configuration editor) and with its own fields and
+   *  wavelengths where they differ (XFIE, YFIE, WAVE; kept on its pupil row as fields, lam, lams). Also read: diffraction
+   *  gratings (rows with lines, order, groove; the primary wavelength then on the pupil row as lam), birefringent
+   *  surfaces (as plain refracting ones, with the crystal's ordinary or extraordinary index by their mode: right while
+   *  the crystal axis lies across the beam, as in a Wollaston prism; no walk-off), and non-sequential components (left
+   *  out), and rectangular apertures (SQAP: rows with ap and apX, about where the axis ray lands). Ignored, with a warning where they
    *  occur: solves, aspheric and other higher-order terms, apertures, and (in a plane) anything out of it. plane: the
    *  file's global plane drawn as this tool's y–z plane: 'yz' (the default, as OpticStudio's Cross-Section layout; out of
    *  it: decenters in x, tilts about y), 'xz' (global x drawn as y; for systems folded in x–z), '3d', or 'auto' (the first
@@ -716,7 +799,7 @@
    *  axes. Dummy planes (no power, no change of index) that are unnamed or hidden in OpticStudio, there for breaks, solves
    *  and merit functions, are dropped unless keepDummies. Returns { name, plane, fields, lambda, lambdas, rays, grid, rows,
    *  warnings }. */
-  function fromZemax(txt, { plane = 'yz', keepDummies = false, config, configs = true } = {}) {
+  function fromZemax(txt, { plane = 'yz', keepDummies = false, config, configs = true, axisZ = false } = {}) {
     if (configs && config === undefined) {
       const n = +/^MNUM\s+(\d+)/m.exec(txt)?.[1] || 1;
       if (n > 1) return fromZemaxConfigs(txt, { plane, keepDummies, n });
@@ -784,6 +867,15 @@
           (runs.length ? `; the surfaces it ignores (${runs.join(', ')}) are left out` : ''),
       );
     }
+    const nw = (head.WAVM?.length >= 24 && num(head.FTYP?.[0]?.[3], Infinity)) || Infinity; // (OpticStudio lists all 24 slots; FTYP says how many are in use)
+    const wl = head.WAVM?.map(w => [num(w[0]), num(w[1])]).filter(w => w[1] > 0 && w[0] <= nw);
+    const pw = num(head.PWAV?.[0]?.[0], 1);
+    const lambda = wl?.find(w => w[0] === pw)?.[1] || 0.55;
+    const lambdas = wl?.length > 1 ? [lambda, ...wl.filter(w => w[0] !== pw).map(w => w[1])] : undefined; // the primary first
+    // a crystal's dispersion is fitted at the file's wavelength farthest from the primary (with one only: the F or C line)
+    const lamFar = (lambdas ?? [0.4861327, 0.6562725]).reduce((a, b) =>
+      Math.abs(b - lambda) > Math.abs(a - lambda) ? b : a,
+    );
     // Frames in the file's global coordinates (surface 0 at the origin): vertex O and axes M = [X, Y, Z] as columns.
     const mul = (A, B) =>
       A.map((r, i) => B[0].map((_, j) => r.reduce((s, _, k) => s + A[i][k] * B[k][j], 0)));
@@ -854,7 +946,15 @@
         const g = z.GLAS?.[0];
         const mirror = g?.[0] === 'MIRROR';
         const ez = [M[0][2], M[1][2], M[2][2]];
-        if (!mirror) {
+        const bire = type === 'BIRE__IN'; // (parameter 1, its mode: odd for the extraordinary ray)
+        const xt = !mirror && CRYSTAL[g?.[0]?.toUpperCase().replace(/[-_].*$/, '')];
+        if (bire && !xt)
+          warn(
+            `${g?.[0] ?? 'no glass'}: no crystal data; its ordinary and extraordinary rays are traced alike`,
+          );
+        if (xt && (bire || !GLASS[g[0].toUpperCase()]))
+          [n, abbe] = crystal(xt[bire && P(1) % 2 ? 'e' : 'o'], lambda, lamFar);
+        else if (!mirror) {
           // a catalogue glass by its name (the n_d, V_d written beside it are often placeholders); a model glass
           // (___BLANK) by those values; another name by them when they look real, else n = 1.5
           const name = g?.[0]?.toUpperCase();
@@ -878,7 +978,13 @@
                 (real && vd > 0 && vd < 1e5 && (name === '___BLANK' || !GLASS[name]) ? vd : 0));
         }
         const para = type === 'PARAXIAL';
-        if (
+        const nsc = type === 'NONSEQCO';
+        if (nsc)
+          warn(
+            `non-sequential component${nm ? ` (${nm})` : ''} left out` +
+              ([1, 2, 3, 4, 5, 6].some(P) ? ': its exit port is not read (taken as on the entry port)' : ''),
+          );
+        else if (
           ![
             'STANDARD',
             'PARAXIAL',
@@ -888,14 +994,28 @@
             'BICONIC',
             'ODDASPH',
             'XASPHERE',
+            'BIRE__IN',
+            'BIRE_OUT',
+            'DGRATING',
           ].includes(type)
         )
           warn(`${type} surface${nm ? ` (${nm})` : ''} read as a standard surface`);
-        else if (!['STANDARD', 'PARAXIAL'].includes(type) && z.PARM?.some(p => +p[1]))
+        else if (
+          ['EVENASPH', 'TOROIDAL', 'BICONICX', 'BICONIC', 'ODDASPH', 'XASPHERE'].includes(type) &&
+          z.PARM?.some(p => +p[1])
+        )
           warn(`higher-order terms of ${type} surfaces ignored`);
         if (!D3 && (Math.abs(O[outP]) > 1e-9 || Math.abs(ez[outP]) > 1e-12)) out = true;
         const ax = j => [M[0][j], M[1][j], M[2][j]];
+        const drawn = v => (D3 ? v : [0, v[inP], v[2]]);
+        const gr = type === 'DGRATING' && P(1) && { lines: P(1) * 1e3, order: P(2), y: drawn(ax(1)) }; // (lines/µm; ruled along its x)
+        if (gr && !D3 && Math.abs(ax(0)[outP]) < 1 - 1e-9) out = true;
+        const sq = z.SQAP?.[0]; // a rectangular aperture: its half-widths in x and y
         A.push({
+          ...(nsc && { nsc }),
+          ...(+sq?.[0] > 0 && +sq[1] > 0 && { rect: [+sq[0] * f, +sq[1] * f] }),
+          ...(gr && { gr }),
+          ...(bire && { cax: drawn(col(M, [P(2), P(3), P(4)])) }), // (the crystal axis: parameters 2 to 4, its direction cosines)
           zi: z.i,
           name: nm,
           V: D3 ? [...O] : [0, O[inP], O[2]],
@@ -927,6 +1047,12 @@
         V: T(a.V),
         ez,
         ...(a.ex ? { ex: D(a.ex), ey: D(a.ey) } : { ey: [0, ez[2], -ez[1]] }),
+        ...(a.gr && {
+          // a grating, for hit: its order counts along the file's y (in a plane: this frame's y, or against it)
+          gk: a.gr.order * a.gr.lines * 1e-3,
+          ge: [0, a.ex ? 1 : Math.sign(dot(D(a.gr.y), [0, ez[2], -ez[1]])), 0],
+          lam: lambda,
+        }),
         d: 0,
         zM: 0,
         ap: 0,
@@ -951,7 +1077,7 @@
       D3
         ? unit([Math.tan(x * rd), Math.tan(y * rd), 1])
         : unit([0, Math.tan((plane === 'xz' ? x : y) * rd), 1]);
-    const offAxis = !fin && fty === 0 && FY.length && !F2.some(F => inPlane(F).every(v => !v));
+    const offAxis = !axisZ && !fin && fty === 0 && FY.length && !F2.some(F => inPlane(F).every(v => !v));
     const w0 = offAxis ? fdir(F2[0]) : [0, 0, 1];
     if (offAxis)
       warn(
@@ -1057,12 +1183,20 @@
       }
       rows.at(-1).t = dot(add(h.p, r.p, -1), r.u);
       const pl = placed(s, r, h, D3, [fx, fy]);
+      const plain = !s.mirror && !s.para && !s.c && !a.stop && s.n === nIn && !a.gr;
       rows.push({
         name: a.name || (j === A.length - 1 ? 'Image' : ''),
         ...pl.row,
+        ...(a.gr && grating(a.gr, Td(a.gr.y), pl)),
+        ...(a.rect && rectAp(a, s, h, pl)),
         _zi: a.zi, // (the file's surface: what identifies it across configurations)
-        _drop: !s.mirror && !s.para && !s.c && !a.stop && s.n === nIn && (s.hidden || !a.name), // (a dummy plane: see below)
+        _drop: plain && (s.hidden || !a.name), // (a dummy plane: see below)
+        _nsc: plain && a.nsc, // (a non-sequential group's port: never kept)
       });
+      if (a.cax && Math.abs(dot(Td(a.cax), h.u)) > 0.1)
+        warn(
+          `${a.name || 'surface ' + a.zi}: the crystal axis is not across the beam; its extraordinary ray is traced by the principal index alone (no walk-off)`,
+        );
       [fx, fy] = pl.fr;
       r = h;
       nIn = h.n;
@@ -1070,15 +1204,35 @@
     // Dummy planes (no power, no change of index) that OpticStudio hides or that have no name, there to anchor coordinate
     // breaks, solves and merit-function targets, are dropped: the axis runs straight through them, so the distance to them
     // and on from them add up. Named, visible ones (focal planes, pupil planes, stops) are kept.
+    /** A surface's rectangular aperture (a.rect: half-widths along the file's x and y) as row values: ap along the row's y,
+     *  apX along its x, about where the axis ray lands, which must be near the aperture's own centre, the vertex. */
+    function rectAp(a, s, h, pl) {
+      const who = a.name || 'surface ' + a.zi;
+      const az = D3
+        ? (Math.atan2(-dot(s.ey, pl.x), dot(s.ey, cross(pl.z, pl.x))) * 180) / Math.PI
+        : plane === 'xz'
+          ? 90
+          : 0; // (the file's y in the row's frame)
+      const q = Math.round(az / 90);
+      const [apX, ap] = q % 2 ? [a.rect[1], a.rect[0]] : a.rect;
+      if (Math.hypot(...add(h.p, s.V, -1)) > Math.min(ap, apX) / 2)
+        return void warn(`${who}: its rectangular aperture is not centred on the beam; left out`);
+      if (Math.abs(az - 90 * q) > 1)
+        warn(
+          `${who}: its rectangular aperture is turned ${+(az - 90 * q).toFixed(1)}° about the axis; drawn square to the surface’s own axes`,
+        );
+      return { ap, apX };
+    }
     const dropped = [];
     for (let i = rows.length - 2; i > 0; i--)
-      if (rows[i]._drop && !keepDummies) {
+      if ((rows[i]._drop && !keepDummies) || rows[i]._nsc) {
         rows[i - 1].t += rows[i].t;
-        dropped.push(i);
+        if (!rows[i]._nsc) dropped.push(i);
         rows.splice(i, 1);
       }
     for (const r of rows) {
       delete r._drop;
+      delete r._nsc;
       if (config === undefined) delete r._zi;
     }
     if (dropped.length)
@@ -1134,11 +1288,7 @@
       rows[0].ap = Math.abs(F) / (2 * -ap);
       if (!isFinite(rows[0].ap)) rows[0].ap = stopY || 10;
     }
-    const nw = (head.WAVM?.length >= 24 && num(head.FTYP?.[0]?.[3], Infinity)) || Infinity; // (OpticStudio lists all 24 slots; FTYP says how many are in use)
-    const wl = head.WAVM?.map(w => [num(w[0]), num(w[1])]).filter(w => w[1] > 0 && w[0] <= nw);
-    const pw = num(head.PWAV?.[0]?.[0], 1);
-    const lambda = wl?.find(w => w[0] === pw)?.[1] || 0.55;
-    const lambdas = wl?.length > 1 ? [lambda, ...wl.filter(w => w[0] !== pw).map(w => w[1])] : undefined; // the primary first
+    if (rows.some(r => r.lines)) rows[0].lam = lambda; // (what a grating diffracts the axis ray by)
     return {
       name: (head.NAME?.[0] ?? []).join(' '),
       plane,
@@ -1348,6 +1498,7 @@
       const h = secant(got, out[0].ap, 1e-3 * out[0].ap);
       if (isFinite(h) && h > 0) out[0].ap = h;
     }
+    if (rows.some(r => r.lines)) warnings.push('gratings become plain surfaces in the reversed system');
     if (rows.some(r => r.solve && Object.keys(r.solve).length) || rows.some(r => r.lock))
       warnings.push(
         'solves and focus locks are not carried over: the reversed system is the geometry as it stands',

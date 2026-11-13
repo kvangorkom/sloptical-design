@@ -20,6 +20,8 @@
       return String(+v.toPrecision(15));
     };
     const three = is3D(rows) || fields.some(Array.isArray);
+    if (rows.some(r => r.lines) && lib !== 'optiland')
+      throw Error('this design has a grating: export it for optiland or Zemax (batoid has none)');
     if (three && lib !== 'batoid')
       throw Error(
         'this design leaves the y–z plane: export it for batoid or Zemax (the optiland script is planar)',
@@ -43,6 +45,10 @@
         : `${py(s.V[1])}, ${py(s.V[2])}, ${py(Math.atan2(-s.ez[1], s.ez[2]))}`;
       return `    (${JSON.stringify(uniq(s.name || 'S' + (i + 1)))}, "${kind}", ${where}, ${py(s.c ? 1 / s.c : 0)}, ${py(s.k)}, ${py(s.nIn)}, ${py(s.nOut)}),`;
     });
+    // optiland counts a grating's order along the surface's −y (reflective) or +y (transmissive), as traced against it
+    const gratings = S.flatMap((s, i) =>
+      s.gk ? [`${i}: (${py(1e3 / s.lines)}, ${s.order ?? 1}, ${py(((s.groove || 0) * Math.PI) / 180)})`] : [],
+    );
     const beam = rows[0].R || 0;
     const doc =
       lib === 'batoid'
@@ -83,7 +89,14 @@ ROT3D = True            # surfaces carry a vertex (x, y, z) and a full rotation`
 SURFACES = [
 ${table.join('\n')}
 ]
-`;
+${
+  gratings.length
+    ? `
+# gratings, by their place in SURFACES: period (µm), order, groove angle (rad) about the surface's axis
+GRATINGS = {${gratings.join(', ')}}
+`
+    : ''
+}`;
     const batoid = `
 
 def surface(R, k):
@@ -148,7 +161,14 @@ def build():
         kw = dict(index=i, y=y, z=z, rx=rx, conic=k, comment=name,
                   material="mirror" if kind == "mirror" else "air" if n2 == 1 else IdealMaterial(n=n2))
         if R:
-            kw["radius"] = R
+            kw["radius"] = R${
+              gratings.length
+                ? `
+        if i - 2 in GRATINGS:
+            period, order, groove = GRATINGS[i - 2]
+            kw.update(surface_type="grating", grating_period=period, grating_order=order, groove_orientation_angle=groove)`
+                : ''
+            }
         op.surfaces.add(**kw)
     op.set_aperture(aperture_type="EPD", value=2*A)
     op.fields.set_type("object_height" if BEAM else "angle")

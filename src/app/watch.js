@@ -197,12 +197,13 @@ const WQ = {
     pic: (w, g, P) => {
       const s = S[w.ri - 1];
       const pts = footprint(w.ri - 1, w.fi).map(q => q.loc);
-      const R = 1.1 * Math.max(s.ap || 0, ...pts.map(p => Math.hypot(...p))) || 1;
+      const R = 1.1 * Math.max(s.ap || 0, (s.ap && s.apX) || 0, ...pts.map(p => Math.hypot(...p))) || 1;
       const sc = (P / 2 - 3) / R;
       if (s.ap) {
         g.strokeStyle = tok('--mute');
         g.beginPath();
-        g.arc(P / 2, P / 2, s.ap * sc, 0, 7);
+        if (s.apX > 0) g.rect(P / 2 - s.apX * sc, P / 2 - s.ap * sc, 2 * s.apX * sc, 2 * s.ap * sc);
+        else g.arc(P / 2, P / 2, s.ap * sc, 0, 7);
         g.stroke();
       }
       g.fillStyle = fc(w.fi);

@@ -174,7 +174,12 @@ describe('Zemax import: real OpticStudio files', () => {
     near(b[2].n, 1.62004, 1e-5, 'GLSS: F2');
     near(b[2].tilt, 2, 1e-9, 'PRAM: the break tilts the plate in configuration 2');
     assert.ok(!a[2].tilt);
-    assert.ok(im.warnings.some(w => /not imported per configuration.*WAVE/.test(w)));
+    assert.deepEqual(
+      [a[0].lam, b[0].lam],
+      [0.55, 0.63],
+      'WAVE: each configuration’s own wavelength, on its pupil row',
+    );
+    assert.ok(!im.warnings.some(w => /not imported per configuration/.test(w)));
     assert.ok(
       im.warnings.some(w => /^2 configurations: Plate out \(4 surfaces\); Plate in \(6 surfaces\)/.test(w)),
     );

@@ -44,6 +44,11 @@ const COLS = [
   ['t', 'Dist →', 'Distance (mm) along the axis ray to the next surface'],
   ['n', 'n', 'Refractive index after the surface'],
   ['ap', 'Semi-ap', 'Clear semi-aperture (mm); blank = unlimited'],
+  [
+    'apX',
+    'Semi-ap x',
+    'For a rectangular aperture: its half-width (mm) along the surface’s x, Semi-ap then being its half-width along y; blank = round',
+  ],
 ];
 // In 3D (a design with them, or any view but the side one) two more columns follow Tilt: tiltY and clock (src/engine/trace.js header).
 const COLS3 = [
@@ -64,7 +69,16 @@ const ABBE = [
   'Abbe V',
   'Abbe number of the glass after the surface (blank: no dispersion); n is its index at the primary wavelength (the first λ)',
 ];
-const ALLCOLS = [...COLS, ...COLS3, ABBE];
+// With a grating, its line density and order follow n (and the Abbe number).
+const GRAT = [
+  [
+    'lines',
+    'Lines/mm',
+    'Grating line density (lines/mm): ruled along the surface’s x, evenly spaced along its y',
+  ],
+  ['order', 'Order', 'Diffraction order: n′ sin θ′ = n sin θ + order · λ · lines, along the surface’s y'],
+];
+const ALLCOLS = [...COLS, ...COLS3, ABBE, ...GRAT];
 const three = () => !side || Optics.is3D(sys.rows) || sys.fields.some(Array.isArray);
 const TILTX = [
   'tilt',
@@ -73,20 +87,23 @@ const TILTX = [
 ]; // (3D: Tilt is the tilt about x)
 const cols = () => {
   const c = three() ? [...COLS.slice(0, 3), TILTX, ...COLS3, ...COLS.slice(4)] : [...COLS];
+  if (sys.rows.some(r => r.lines)) c.splice(c.findIndex(x => x[0] === 'n') + 1, 0, ...GRAT);
   if (sys.lambdas) c.splice(c.findIndex(x => x[0] === 'n') + 1, 0, ABBE);
   return c;
 };
 const noIndex = (k, r) =>
-  ((k === 'n' || k === 'abbe') && r.type === 'mirror') || (k === 'k' && r.type === 'paraxial'); // (a mirror keeps the index; an ideal lens has no conic)
-/** Surface types: refracting, mirror, and paraxial (an ideal thin lens of focal length f; see src/engine/trace.js). */
-const TYPES = ['refract', 'mirror', 'paraxial', 'caliball'];
-/** A row's type as the Type menu shows it: a caliball is a mirror with `ball`. */
-const typeOf = r => (r.ball ? 'caliball' : r.type);
+  ((k === 'n' || k === 'abbe') && r.type === 'mirror') ||
+  (k === 'k' && r.type === 'paraxial') ||
+  ((k === 'lines' || k === 'order') && !r.lines); // (a mirror keeps the index; an ideal lens has no conic; only a grating has lines)
+/** Surface types: refracting, mirror, paraxial (an ideal thin lens of focal length f) and grating (see src/engine/trace.js). */
+const TYPES = ['refract', 'mirror', 'paraxial', 'grating', 'caliball'];
+/** A row's type as the Type menu shows it: a caliball is a mirror with `ball`, a grating a surface with `lines`. */
+const typeOf = r => (r.ball ? 'caliball' : r.lines ? 'grating' : r.type);
 /** Change row r's type. A paraxial lens is flat, with no conic and no foci to pin; a surface becoming one starts as a
  *  100 mm lens (a mirror's focal length, if it was a curved mirror). A caliball is a precision sphere, a convex mirror of
  *  radius R (it starts as a 1″ ball, 12.7 mm), centred on the focus of the beam arriving (a solve on the distance before
  *  it, which can be taken off to decentre or defocus it), so it sends the light straight back: last, it makes the system
- *  a double pass. */
+ *  a double pass. A grating starts as a reflective one, 600 lines/mm in order 1. */
 function setType(r, ty) {
   const was = typeOf(r);
   const ri = sys.rows.indexOf(r);
@@ -94,7 +111,9 @@ function setType(r, ty) {
     delete r.ball;
     if (sys.rows[ri - 1]?.solve?.t?.type === 'centre') delete sys.rows[ri - 1].solve.t;
   }
-  r.type = ty === 'caliball' ? 'mirror' : ty;
+  if (was === 'grating') for (const k of ['lines', 'order', 'groove']) delete r[k];
+  r.type = ty === 'caliball' || ty === 'grating' ? 'mirror' : ty;
+  if (ty === 'grating') Object.assign(r, { lines: 600, order: 1 });
   if (ty === 'paraxial' && was !== 'paraxial') {
     r.f = r.f || (r.R && was === 'mirror' ? -r.R / 2 : 100);
     Object.assign(r, { R: 0, k: 0, d: 0 }); // (centred on the beam)
@@ -116,7 +135,22 @@ function setType(r, ty) {
 /** The value a column edits in row r: a paraxial (ideal) lens's R column is its focal length. */
 const colKey = (k, r) => (k === 'R' && r?.type === 'paraxial' ? 'f' : k);
 const FTIP = 'Focal length (mm) of the ideal (paraxial) lens: + converging, − diverging; ∞ = no power';
-const SPAN = { R: 100, f: 100, k: 1, d: 10, tilt: 5, tiltY: 5, clock: 15, t: 50, n: 0.25, ap: 5, abbe: 20 }; // jog half-range when the value is 0 (else ±50 %)
+const SPAN = {
+  R: 100,
+  f: 100,
+  k: 1,
+  d: 10,
+  tilt: 5,
+  tiltY: 5,
+  clock: 15,
+  t: 50,
+  n: 0.25,
+  ap: 5,
+  abbe: 20,
+  apX: 5,
+  lines: 100,
+  order: 1,
+}; // jog half-range when the value is 0 (else ±50 %)
 const span = (k, v) => Math.abs(v) / 2 || SPAN[k];
 const FIELD = ['#e8590c', '#1c7ed6', '#2f9e44', '#ae3ec9', '#f08c00', '#0c8599'];
 const fc = i => FIELD[i % FIELD.length];
@@ -140,6 +174,13 @@ function lamColor(l) {
   return `rgb(${a[1].map((v, i) => Math.round(v + t * (b[1][i] - v))).join(',')})`;
 }
 const fmt = v => +(+v).toPrecision(6);
+/** A wavelength's colour among the design's own: its hue when they are all visible; otherwise (ultraviolet or infrared,
+ *  which would all look alike) the hue at its place between the shortest and the longest, spread over the visible. */
+function lamCol(l) {
+  const L = sys.lambdas ?? [sys.lambda];
+  const [lo, hi] = [Math.min(...L), Math.max(...L)];
+  return (lo >= 0.4 && hi <= 0.7) || hi === lo ? lamColor(l) : lamColor(0.42 + (0.26 * (l - lo)) / (hi - lo));
+}
 const nf = v =>
   v !== v
     ? '—'
@@ -148,15 +189,16 @@ const nf = v =>
       : Math.abs(v) >= 1e5 || (v && Math.abs(v) < 1e-3)
         ? v.toExponential(2)
         : +v.toPrecision(4);
+const BLANK0 = ['ap', 'apX', 'abbe']; // (shown blank when 0)
 const show = (k, v = 0) =>
   (k === 'R' || k === 'f') && !v
     ? '∞'
-    : (k === 'ap' || k === 'abbe') && !v
+    : BLANK0.includes(k) && !v
       ? ''
       : String(fmt(Math.abs(v) < 1e-12 ? 0 : v)); // solver round-off reads as 0
 const parse = (k, s) => (
   (s = s.trim()),
-  /^[+-]?(inf|∞)/i.test(s) || ((k === 'ap' || k === 'abbe') && !s) ? 0 : s && isFinite(+s) ? +s : null
+  /^[+-]?(inf|∞)/i.test(s) || (BLANK0.includes(k) && !s) ? 0 : s && isFinite(+s) ? +s : null
 );
 const tok = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const label = i => sys.rows[i + 1]?.name || 'S' + (i + 1);
@@ -192,7 +234,17 @@ let S = [];
 let AX = [];
 let T = [];
 let B = [];
-let BW = []; // other wavelengths: [{ l (µm), S, B }] (see layout())
+let BW = []; // other wavelengths: [{ l (µm), S, from, T, B, C }] (see layout())
+/** Run fn with the surfaces Sl as the layout's (what cones() and the per-layout caches read): another wavelength's. */
+function withS(Sl, fn) {
+  const keep = S;
+  S = Sl;
+  try {
+    return fn();
+  } finally {
+    S = keep;
+  }
+}
 let C = [];
 let CJ = [];
 // A double pass (S.dp): the light back off the last mirror. AXB[k]: start and direction of return segment k (k = 0 leaves
@@ -213,6 +265,30 @@ const segB = k => {
   return q ? AXB[k].u.reduce((a, u, m) => a + u * (q[m] - AXB[k].p[m]), 0) : 0;
 }; // length of return segment k
 const seg = j => AX[j].u.reduce((a, u, k) => a + u * (S[j].P[k] - AX[j].p[k]), 0); // length of axis segment j
+
+/** The beam a pupil row carries, into sys: a configuration's own fields and wavelengths (where they differ between
+ *  configurations: fields, lam the primary wavelength, lams all of them), which sys.fields, sys.lambda and sys.lambdas
+ *  then show and edit. */
+function beamIn(p = sys.rows[0]) {
+  if (p.fields) sys.fields = structuredClone(p.fields);
+  if (!p.lam) return;
+  sys.lambda = p.lam;
+  if (p.lams) sys.lambdas = [...p.lams];
+  else delete sys.lambdas;
+}
+/** … and back onto it, as edited. A grating needs the primary wavelength there too (Optics.build reads it). */
+function beamOut() {
+  const p = sys.rows[0];
+  if (p.fields) p.fields = structuredClone(sys.fields);
+  if (!p.lam && !sys.rows.some(r => r.lines)) return;
+  p.lam = sys.lambda;
+  if (sys.lambdas) p.lams = [...sys.lambdas];
+  else delete p.lams;
+}
+function showBeam() {
+  $('fields').value = sys.fields.map(fstr).join(', ');
+  $('lambda').value = (sys.lambdas ?? [sys.lambda]).join(', ');
+}
 
 function load(o, keepView) {
   if (sys) {
@@ -240,11 +316,12 @@ function load(o, keepView) {
   sys.rows.forEach(r => {
     if (r.pivot !== undefined && typeof r.pivot !== 'object') r.pivot = { at: r.pivot, ref: 0 };
   }); // older saves
-  $('fields').value = sys.fields.map(fstr).join(', ');
+  beamIn();
+  showBeam();
   $('rays').value = sys.rays;
   $('grid').value = sys.grid;
-  $('lambda').value = (sys.lambdas ?? [sys.lambda]).join(', ');
   $('airy').checked = sys.airy;
+  $('fwhm').checked = !!sys.fwhm;
   $('full').checked = sys.full;
   $('aoiT').checked = !!sys.aoi;
   if (!keepView) {
@@ -301,14 +378,20 @@ function layout() {
     if (s.ball) [s.y0, s.y1] = [-0.999 / Math.abs(s.c), 0.999 / Math.abs(s.c)]; // (a caliball: the whole ball, whatever meets it)
     s.prof = Optics.profile(s, s.y0, s.y1);
   });
-  // other wavelengths (when some glass disperses): the same optics, each traced with that wavelength's indices
+  // other wavelengths (when some glass or a grating disperses): the same optics, each traced at that wavelength. from: the
+  // first surface after which its light visibly parts from the reference's (Optics.partsFrom; −1: none), where it is
+  // drawn from (a lens's slight colour alone isn't drawn: its cone would only lie over the reference's and fade it)
   BW =
     sys.lambdas && Optics.dispersive(sys.rows)
       ? sys.lambdas.slice(1).map(l => {
           const Sl = Optics.atWavelength(S, sys.rows, l, sys.lambda);
           const bl = (pts, f) =>
             pts.map(([x, y]) => [Optics.start(x, y, f, S.beam), ...Optics.trace(Sl, x, y, f)]);
-          return { l, S: Sl, B: sys.fields.map(f => bl(Optics.grid(a, sys.grid), f)) };
+          const [Tl, Bl] = [Optics.fan(a, sys.rays), Optics.grid(a, sys.grid)].map(p =>
+            sys.fields.map(f => bl(p, f)),
+          );
+          const from = Optics.partsFrom(S, Sl, sys.fields);
+          return { l, S: Sl, from, T: Tl, B: Bl, C: sys.view === 'rays' ? [] : withS(Sl, cones) };
         })
       : [];
   C = sys.view === 'rays' ? [] : cones();
@@ -345,11 +428,20 @@ function withLayout(L, fn) {
     ({ rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc, AXB, TB, BB } = keep);
   }
 }
-const layoutOf = rows =>
-  withLayout({ rows, S, AX, T, B, BW, C, CJ, AOIc }, () => {
-    layout();
-    return { rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc, AXB, TB, BB };
-  });
+const layoutOf = rows => {
+  const keep = [sys.fields, sys.lambda, sys.lambdas];
+  if ((rows[0].fields ?? sys.fields).length === sys.fields.length) beamIn(rows[0]); // (its own beam, field for field)
+  try {
+    return withLayout({ rows, S, AX, T, B, BW, C, CJ, AOIc }, () => {
+      layout();
+      return { rows: sys.rows, S, AX, T, B, BW, C, CJ, AOIc, AXB, TB, BB };
+    });
+  } finally {
+    [sys.fields, sys.lambda] = keep;
+    if (keep[2]) sys.lambdas = keep[2];
+    else delete sys.lambdas;
+  }
+};
 
 let stigNote = ''; // shown after the update that refused an edit
 
@@ -358,6 +450,7 @@ function update() {
   fz = sys.flip?.lr ? -1 : 1;
   fy = sys.flip?.ud ? -1 : 1;
   if (!hist.lock) {
+    beamOut();
     const pre = sys.rows.map(ownVals);
     stig3D();
     fails = Optics.applySolves(sys.rows);

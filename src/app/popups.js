@@ -145,7 +145,7 @@ function renderEdit(p, ri) {
       if (noIndex(k, r)) return `<td class="na" title="${esc(tip)}"><label>${h}</label><span>—</span></td>`;
       return (
         `<td title="${esc(tip)}"><label>${h}</label><span class="pin"><input class="num" data-k="${k}" inputmode="decimal" autocomplete="off" value="${show(k, r[k])}" aria-label="${esc(h)} of ${esc(who)}"` +
-        `${k === 'ap' ? ' placeholder="auto"' : ''}>${k === 'tilt' ? '<span class="piv"></span>' : k === 'd' ? '<span class="piv oa"></span>' : ''}</span></td>`
+        `${k === 'ap' ? ' placeholder="auto"' : k === 'apX' ? ' placeholder="round"' : ''}>${k === 'tilt' ? '<span class="piv"></span>' : k === 'd' ? '<span class="piv oa"></span>' : ''}</span></td>`
       );
     };
     ed.innerHTML =
@@ -304,9 +304,11 @@ function renderPop(p) {
   const P = 128;
   const H =
     P +
-    (mode === 'wfe' || mode === 'fringe' || (mode === 'spot' && (sys.airy || BW.length)) || (surf && !S[i].ap)
-      ? 12
-      : 0);
+    (mode === 'spot' && BW.length && !back
+      ? 12 * (BW.length + 1) // (a line per wavelength)
+      : mode === 'wfe' || mode === 'fringe' || (mode === 'spot' && sys.airy) || (surf && !S[i].ap)
+        ? 12
+        : 0);
   const r = devicePixelRatio;
   const pc = p.c;
   const pctx = pc.getContext('2d');
@@ -372,8 +374,8 @@ function renderPop(p) {
     }
     const multi = mode === 'spot' && BW.length && !back; // other wavelengths too: each in its colour
     const ds = [
-      ...fis.map(fi => ({ fi, st: samp(fi), col: multi ? lamColor(sys.lambda) : fc(fi) })),
-      ...(multi ? BW.flatMap(w => fis.map(fi => ({ fi, st: sampW(w, fi), col: lamColor(w.l) }))) : []),
+      ...fis.map(fi => ({ fi, l: sys.lambda, st: samp(fi), col: multi ? lamCol(sys.lambda) : fc(fi) })),
+      ...(multi ? BW.flatMap(w => fis.map(fi => ({ fi, l: w.l, st: sampW(w, fi), col: lamCol(w.l) }))) : []),
     ];
     const all = ds.flatMap(d => d.st.map(q => q.xy));
     const spot = mode === 'spot';
@@ -387,7 +389,8 @@ function renderPop(p) {
             ds[0].st[0].n,
           )
         : 0;
-    const R = 1.1 * Math.max(A, apR, ...all.map(p => Math.hypot(p[0] - c.cx, p[1] - c.cy))) || 1;
+    const apX = (apR && S[i].apX) || 0; // (a rectangular aperture's half-width in x)
+    const R = 1.1 * Math.max(A, apR, apX, ...all.map(p => Math.hypot(p[0] - c.cx, p[1] - c.cy))) || 1;
     const sc = (P / 2 - 16) / R;
     pctx.strokeStyle = tok('--line');
     pctx.lineWidth = 1;
@@ -399,7 +402,8 @@ function renderPop(p) {
     pctx.stroke();
     if (apR) {
       pctx.strokeStyle = tok('--mute');
-      circle(apR, sc, []);
+      if (apX) pctx.strokeRect(ox - apX * sc, oy - apR * sc, 2 * apX * sc, 2 * apR * sc);
+      else circle(apR, sc, []);
     }
     if (A) {
       pctx.strokeStyle = tok('--ink');
@@ -411,18 +415,21 @@ function renderPop(p) {
         pctx.fillRect(ox + (p[0] - c.cx) * sc - 1, oy - (p[1] - c.cy) * sc - 1, 2, 2),
       );
     });
-    txt(spot ? `${fl(F[fis[0]])}  rms ${nf(c.rms)}` : `half-width ${nf(R / 1.1)}`, 0);
+    // a spot's size: its RMS radius, or (File ▸ Options) the FWHM of a round Gaussian spot with that RMS radius
+    const size = d => (d.st.length ? spotSize(Optics.spot(d.st.map(q => q.xy)).rms, sys.fwhm) : 'no rays');
     if (multi) {
-      let x = k * P + 4; // instead of the Airy radius: the wavelengths (nm), each in its colour; the rms is over all of them
-      (sys.lambdas ?? []).forEach(l => {
-        const t = String(Math.round(l * 1000));
-        pctx.fillStyle = lamColor(l);
-        pctx.fillText(t, x, P - 4 + 12);
-        x += pctx.measureText(t).width + 6;
+      // this field's spot at each wavelength, in its colour
+      txt(`${fl(F[fis[0]])}  ${sys.fwhm ? 'FWHM' : 'RMS radius'}`, 0);
+      ds.forEach((d, n) => {
+        pctx.fillStyle = d.col;
+        pctx.fillText(`${Math.round(d.l * 1000)} nm  ${size(d)}`, k * P + 4, P - 4 + 12 * (n + 1));
       });
-      pctx.fillStyle = tok('--mute');
-      pctx.fillText('nm', x, P - 4 + 12);
-    } else if (A) txt(`Airy r ${nf(A)}`, 1);
+    } else
+      txt(
+        spot ? `${fl(F[fis[0]])}  ${sys.fwhm ? 'FWHM' : 'RMS'} ${size(ds[0])}` : `half-width ${nf(R / 1.1)}`,
+        0,
+      );
+    if (A && !multi) txt(`Airy r ${spotSize(A)}`, 1);
     else if (surf && !spot && !apR && Math.hypot(c.cx, c.cy) > 1e-3 * a) txt(`off-centre ${nf(c.cy)}`, 1);
   });
   p.el.hidden = false;
@@ -436,6 +443,12 @@ function renderPop(p) {
  *  from what would send it straight back along the light going out at the same plane (the outgoing wavefront's own tilt
  *  and curvature, fitted there): at the pupil, where the light went out as a perfect wave, exactly what an interferometer
  *  sees, tilt and focus included, so a decentred or defocused caliball shows its fringes. */
+/** A spot's size as the diagrams report it, with its unit (µm below 0.1 mm): its RMS radius r (mm), or (fwhm) the full
+ *  width at half maximum of a round Gaussian spot with that RMS radius, 2 √(ln 2) r. */
+const spotSize = (r, fwhm) => {
+  const v = fwhm ? 2 * Math.sqrt(Math.LN2) * r : r;
+  return v < 0.1 ? `${nf(v * 1e3)} µm` : `${nf(v)} mm`;
+};
 const fringeCache = new Map();
 function fringes(fi, back, j, sAt) {
   const N = 49;
