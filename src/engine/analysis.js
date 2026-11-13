@@ -509,7 +509,7 @@
 
   // ── Wavelengths. A refracting row's n is its index at the primary wavelength λ0; an optional Abbe number (row.abbe, at
   // the d line: (n_d − 1)/(n_F − n_C)) sets how it changes with wavelength, by a two-term Cauchy law n = A + B/λ². Rows without
-  // one don't disperse. (A sketch's model: real glass catalogues fit several terms.)
+  // one don't disperse. (A sketch's model: real glass catalogues fit several terms.) A grating (row.lines) disperses too.
   const LF = 0.4861327; // µm: the F, d and C lines
   const LD = 0.5875618;
   const LC = 0.6562725;
@@ -519,7 +519,8 @@
       ? n
       : n + ((n - 1) / abbe / (LF ** -2 - LC ** -2)) * (lam ** -2 - lam0 ** -2);
   /** Whether any row disperses (has an Abbe number after a refracting surface into glass). */
-  const dispersive = rows => rows.some((r, i) => i && r.type !== 'mirror' && r.abbe && r.n !== 1);
+  const dispersive = rows =>
+    rows.some((r, i) => i && (r.lines || (r.type !== 'mirror' && r.abbe && r.n !== 1)));
   /** Surfaces S (built at lam0, which sets where everything is) with the indices at wavelength lam: a ray traced through these
    *  takes the path that wavelength takes through the same optics. */
   function atWavelength(S, rows, lam, lam0) {
@@ -527,9 +528,10 @@
     let nIn = S[0]?.nIn ?? 1; // (each surface's index before it too: a double pass goes back into it)
     const out = S.map((s, i) => {
       const r = rows[i + 1];
-      if (s.mirror) return s; // (a mirror is the same surface)
+      const g = s.gk && { lam }; // (a grating diffracts by the wavelength)
+      if (s.mirror) return g ? { ...s, ...g } : s; // (a plain mirror is the same surface)
       const n = r.abbe ? nAt(r.n, r.abbe, lam, lam0) : s.n;
-      const q = n === s.n && nIn === s.nIn ? s : { ...s, n, nIn };
+      const q = n === s.n && nIn === s.nIn && !g ? s : { ...s, n, nIn, ...g };
       nIn = n;
       return q;
     });

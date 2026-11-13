@@ -24,6 +24,10 @@
 //     as OpticStudio's Paraxial surface does, so a collimated beam at any angle focuses perfectly on the focal plane. The path
 //     it adds keeps the wavefront of a collimated beam exactly spherical about that focus (OpticStudio's infinite-conjugate
 //     OPD mode; exact for collimated light, the usual use).
+//   • A grating is a mirror or a refracting surface with `lines` (lines/mm) ruled along its own x, evenly spaced along
+//     its y (as projected on the vertex plane, like OpticStudio's Diffraction Grating; `groove`, deg, turns them about
+//     its z). In its frame the light's direction × index gains order · λ · lines along y, across the surface:
+//     n′ sin θ′ = n sin θ + order · λ · lines. λ is the primary wavelength, kept on the pupil row (`lam`, µm).
 //   • Foci are the parent conic's geometric foci (foci()); `lock` pins them to points by varying chosen values (holdFoci).
 //   • In 3D (all optional, 0 by default, so a planar design is unchanged bit for bit): `tiltY` turns the surface's +z toward
 //     +x after the tilt, and `clock` turns its +x toward +y about its own z after both (tilt, tiltY, clock: x, then y,
@@ -93,6 +97,20 @@
       cos = -cos;
     } // normal faces the incoming ray
     const n2 = s.mirror ? n : back ? s.nIn : s.n;
+    if (s.gk) {
+      // a grating: the part of n·D + g·ŷ along the surface is kept; the rest follows from the index (none: evanescent)
+      const g = s.gk * s.lam;
+      const a = add(
+        D.map(v => n * v),
+        s.ge,
+        g,
+      );
+      const at = add(a, N, -dot(a, N));
+      const w = n2 * n2 - dot(at, at);
+      if (w < 0) return null;
+      const u = unit(toW(s, add(at, N, (s.mirror ? 1 : -1) * Math.sqrt(w))));
+      return { p: add(s.V, toW(s, L)), u, n: n2, L: opl + n * τ + g * dot(s.ge, L), loc, ci: cos }; // (the path the grooves add)
+    }
     const mu = n / n2;
     const g = 1 - mu * mu * (1 - cos * cos);
     if (g < 0) return null; // TIR
@@ -182,6 +200,7 @@
     let t = rows[0].t;
     let fx = [1, 0, 0];
     let fy = [0, 1, 0]; // the incoming frame: fx, fy and the axis
+    const lam = rows[0].lam ?? 0.55; // the primary wavelength (µm): what a grating diffracts the axis ray by
     const S = Object.assign([], { beam: rows[0].R || 0, ap: rows[0].ap || 1 }); // incoming beam ROC (for trace()) and pupil size
     for (const r of rows.slice(1)) {
       const P = add(ray.p, ray.u, t);
@@ -238,6 +257,10 @@
       }
       Object.assign(s, { d: yM, zM, th: angleAt(c, r.k, yM, zM), seg, uIn: ray.u, exIn: fx, eyIn: fy });
       if (para) Object.assign(s, { para, f: r.f || 0, n: r.n || ray.n });
+      if (r.lines) {
+        const az = ((r.groove || 0) * Math.PI) / 180;
+        Object.assign(s, { gk: (r.order ?? 1) * r.lines * 1e-3, ge: [-Math.sin(az), Math.cos(az), 0], lam });
+      }
       const Du = toL(s, ray.u);
       s.side = Math.sign(c * (yM * Du[1] + (1 + r.k) * zM * Du[2]) - Du[2]) || 0; // how the axis ray crosses the parent: sign of ∇F·u/2 at the centre
       if (seg) {

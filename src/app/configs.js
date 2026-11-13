@@ -122,6 +122,8 @@ function setConfig(ci) {
   commit();
   const ids = sys.rows.map(r => r.id);
   Optics.setActive(sys, ci);
+  beamIn(); // (its own fields and wavelengths, if it has them)
+  showBeam();
   rowsChanged(ids);
   if (VIEWER) syncRoCfg(); // (a read-only page's picker)
 }

@@ -20,6 +20,8 @@
       return String(+v.toPrecision(15));
     };
     const three = is3D(rows) || fields.some(Array.isArray);
+    if (rows.some(r => r.lines))
+      throw Error('this design has a grating: export it for Zemax (the scripts have none)');
     if (three && lib !== 'batoid')
       throw Error(
         'this design leaves the y–z plane: export it for batoid or Zemax (the optiland script is planar)',
